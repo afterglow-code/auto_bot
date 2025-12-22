@@ -1,0 +1,31 @@
+name: Daily Stock Bot
+
+on:
+  schedule:
+    # 매일 한국 시간 오전 8시 30분 실행 (UTC 23:30)
+    # GitHub는 UTC 기준이므로 한국시간 -9시간 해야 함
+    - cron: '30 23 * * *'
+  workflow_dispatch: # 수동 실행 버튼 추가
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: python 1m_auto_bot_upload.py
