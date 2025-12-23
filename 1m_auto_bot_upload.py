@@ -31,10 +31,9 @@ def send_telegram(msg):
         print(f"전송 실패: {e}")
 
 def get_todays_signal():
-    print("데이터 분석 중 (FDR 기반)...")
+    print("데이터 분석 중 (가중평균 + TOP2 전략)...")
     
     # 1. 데이터 준비
-    # [수정] FDR 사용 시 .KS 제거 (숫자 코드만 사용)
     etf_tickers = {
         'KODEX 200': '069500',
         'KODEX 미국나스닥100TR': '379810',
@@ -45,109 +44,123 @@ def get_todays_signal():
         'KODEX AI전력핵심설비' : '487240',
         'ACE 구글벨류체인액티브' : '483340',
         'PLUS K방산': '449170',
-        #'TIGER 조선TOP10': '494670',
-        'KODEX 미국30년국채액티브(H)': '484790',
-        #'ACE KRX 금현물': '411060'
+        'KODEX 미국30년국채액티브(H)': '484790'
     }
     
     end_date = datetime.now().strftime("%Y-%m-%d")
-    # 지표(120일 이평선) 계산을 위해 넉넉히 500일 전부터 조회
-    start_date = (datetime.now() - timedelta(days=500)).strftime("%Y-%m-%d")
+    # 가중 평균(6개월) 계산을 위해 넉넉히 365일 전부터 조회
+    start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     
     kospi = None
     raw_data = pd.DataFrame()
 
     try:
-        # 1-1. KOSPI 지수 가져오기 (FDR 코드는 'KS11')
+        # 1-1. KOSPI 지수 (시장 타이밍용)
         kospi_df = fdr.DataReader('KS11', start=start_date, end=end_date)
         kospi = kospi_df['Close'].ffill()
 
-        # 1-2. ETF 데이터 가져오기 (반복문 사용)
+        # 1-2. ETF 데이터 수집
         df_list = []
         for name, code in etf_tickers.items():
-            # 데이터 수집
             df = fdr.DataReader(code, start=start_date, end=end_date)
-            
-            # 데이터가 있으면 'Close' 컬럼만 뽑아서 리스트에 추가
             if not df.empty:
                 series = df['Close'].rename(name)
                 df_list.append(series)
-            
-            # [중요] 차단 방지를 위해 0.1초 쉬어줌
-            time.sleep(0.1)
+            time.sleep(0.1) # 차단 방지
         
-        # 1-3. 데이터 합치기
         if df_list:
             raw_data = pd.concat(df_list, axis=1).ffill().dropna()
         else:
-            raise Exception("ETF 데이터를 하나도 가져오지 못했습니다.")
+            raise Exception("데이터 수집 실패")
 
     except Exception as e:
-        error_msg = f"❌ 오류: 데이터 수집 실패\n{e}"
-        print(error_msg)
-        send_telegram(error_msg)
+        send_telegram(f"❌ 오류 발생: {e}")
         return
 
-    # 2. 전략 로직 (기존과 동일)
-    momentum_score = raw_data.pct_change(60).iloc[-1]
+    # 2. [핵심] 가중 평균 모멘텀 계산
+    # 최근 데이터(iloc[-1]) 기준으로 1개월(20일), 3개월(60일), 6개월(120일) 수익률 계산
+    mom_1m = raw_data.pct_change(20).iloc[-1]
+    mom_3m = raw_data.pct_change(60).iloc[-1]
+    mom_6m = raw_data.pct_change(120).iloc[-1]
+
+    # 종합 점수 (단기+중기+장기 평균)
+    # 신규 상장주라 6개월 데이터가 없으면(NaN) 0점 처리하여 안전하게 제외
+    weighted_score = (mom_1m.fillna(0) + mom_3m.fillna(0) + mom_6m.fillna(0)) / 3
+
+    # 시장 타이밍 (코스피 120일선)
     kospi_ma120 = kospi.rolling(window=120).mean().iloc[-1]
     current_kospi = kospi.iloc[-1]
     
-    # 안전장치: 단일 값 추출
     if hasattr(current_kospi, 'item'): current_kospi = current_kospi.item()
     if hasattr(kospi_ma120, 'item'): kospi_ma120 = kospi_ma120.item()
 
     is_bull_market = current_kospi > kospi_ma120
 
-    # 3. 목표 종목 선정
-    target_stock = ""
+    # 3. [핵심] 목표 종목 선정 (TOP 2 분산)
+    final_targets = [] # [(종목명, 비중), (종목명, 비중)] 형태
     reason = ""
-    
+
     if is_bull_market:
-        # 달러를 제외한 종목 중 모멘텀 1등 찾기
-        scores = momentum_score.drop('KODEX 미국달러선물', errors='ignore')
+        # 달러 제외하고 점수 산출
+        scores = weighted_score.drop('KODEX 미국달러선물', errors='ignore')
         
-        if scores.empty:
-             target_stock = "KODEX 미국달러선물"
+        # 점수 높은 순 정렬
+        top_assets = scores.sort_values(ascending=False)
+        
+        # 1등이 0점 이하면 (모두 하락세) -> 달러
+        if top_assets.empty or top_assets.iloc[0] <= 0:
+            final_targets = [('KODEX 미국달러선물', 1.0)]
+            reason = "주도주 부재(모두 하락) -> 달러 방어"
         else:
-            best_etf = scores.idxmax()
-            # 1등조차 모멘텀이 마이너스라면(전부 하락세), 현금성 자산(달러) 대피
-            if scores[best_etf] < 0:
-                target_stock = "KODEX 미국달러선물"
-                reason = "주도주 부재(모두 하락) -> 달러 방어"
+            # 1등과 2등을 뽑음 (점수가 양수인 경우만)
+            selected = []
+            for name, score in top_assets.items():
+                if score > 0:
+                    selected.append(name)
+                if len(selected) >= 2: break
+            
+            # 종목 수에 따라 비중 결정
+            if len(selected) == 1:
+                final_targets = [(selected[0], 1.0)] # 1개면 몰빵
+                reason = f"단독 주도주: {selected[0]}"
             else:
-                target_stock = best_etf
-                reason = f"주도주 모멘텀 1위 ({scores[best_etf]*100:.1f}%)"
+                final_targets = [(selected[0], 0.5), (selected[1], 0.5)] # 2개면 반반
+                reason = f"TOP 2 분산: {selected[0]}, {selected[1]}"
     else:
-        target_stock = "KODEX 미국달러선물"
+        # 하락장 -> 달러 방어
+        final_targets = [('KODEX 미국달러선물', 1.0)]
         reason = "하락장 방어(코스피 이탈)"
 
-    # 4. 날짜 및 메시지 생성
+    # 4. 메시지 생성
     today_dt = datetime.now()
-    
-    # 다음 리밸런싱 날짜 계산 (현재 날짜 + 32일 후의 달 1일)
     next_rebalance_date = (today_dt.replace(day=1) + timedelta(days=32)).replace(day=1)
-    
-    # 오늘이 리밸런싱 기간(1일~7일)인지 확인
     is_rebalance_period = (REBALANCE_PERIOD_START <= today_dt.day <= REBALANCE_PERIOD_END)
-    
-    current_price = raw_data[target_stock].iloc[-1]
-    buy_qty = int(MY_TOTAL_ASSETS // current_price)
     
     msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 투자 비서\n"
     msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'}\n"
+    msg += f"전략: 가중모멘텀 + TOP2 분산\n"
     msg += "-" * 20 + "\n"
     
     if is_rebalance_period:
         msg += "🔔 [리밸런싱 주간입니다]\n"
-        msg += "계좌를 확인하고 아래 종목으로 맞추세요.\n\n"
-        msg += f"👉 목표 종목: {target_stock}\n"
-        msg += f"   (사유: {reason})\n"
-        msg += f"   (매수 예산: 약 {buy_qty}주)\n"
+        msg += f"사유: {reason}\n\n"
+        
+        # 추천 종목 리스트 출력
+        for name, weight in final_targets:
+            current_price = raw_data[name].iloc[-1]
+            buy_budget = MY_TOTAL_ASSETS * weight
+            buy_qty = int(buy_budget // current_price)
+            
+            msg += f"👉 {name}\n"
+            msg += f"   비중: {int(weight*100)}% (약 {buy_qty}주)\n"
+            
     else:
         msg += f"☕ [관망 모드]\n"
-        msg += f"이번 달 목표: {target_stock}\n"
-        msg += f"다음 리밸런싱: {next_rebalance_date.strftime('%Y-%m-%d')}\n"
+        msg += f"이번 달 목표 구성:\n"
+        for name, weight in final_targets:
+             msg += f"- {name} ({int(weight*100)}%)\n"
+             
+        msg += f"\n다음 리밸런싱: {next_rebalance_date.strftime('%Y-%m-%d')}\n"
 
     print(msg)
     send_telegram(msg)
