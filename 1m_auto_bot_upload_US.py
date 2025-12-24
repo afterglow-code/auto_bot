@@ -27,9 +27,15 @@ def send_telegram(msg):
         print(f"[메시지 미리보기]\n{msg}")
         return
         
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}"
+    # [수정] URL에 msg를 직접 넣지 않고, params 딕셔너리로 분리합니다.
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    params = {
+        'chat_id': CHAT_ID,
+        'text': msg
+    }
     try: 
-        requests.get(url)
+        # params=params 를 넣어주면 알아서 & 기호를 처리해줍니다.
+        requests.get(url, params=params)
         print("전송 완료")
     except Exception as e: 
         print(f"전송 실패: {e}")
