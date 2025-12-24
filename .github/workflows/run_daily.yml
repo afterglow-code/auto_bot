@@ -4,7 +4,7 @@ on:
   schedule:
     # 매일 한국 시간 오전 8시 30분 실행 (UTC 23:30)
     # GitHub는 UTC 기준이므로 한국시간 -9시간 해야 함
-    - cron: '30 23 * * *'
+    - cron: '20 23 * * *'
   workflow_dispatch: # 수동 실행 버튼 추가
 
 jobs:
@@ -37,3 +37,11 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
       run: python 1m_auto_bot_upload_stock.py
+      continue-on-error: true 
+
+    - name: Run US Stock Bot
+      if: always() 
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: python 1m_auto_bot_upload_US.py
