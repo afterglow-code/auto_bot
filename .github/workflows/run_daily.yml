@@ -2,9 +2,10 @@ name: Daily Stock Bot
 
 on:
   schedule:
-    # 매일 한국 시간 오전 8시 30분 실행 (UTC 23:30)
-    # GitHub는 UTC 기준이므로 한국시간 -9시간 해야 함
-    - cron: '20 23 * * *'
+    # 한국 시간 월~금 오전 08:20 실행
+    # (UTC 기준 일~목 23:20)
+    # 0=Sun, 1=Mon, ..., 4=Thu
+    - cron: '20 23 * * 0-4'
   workflow_dispatch: # 수동 실행 버튼 추가
 
 jobs:
