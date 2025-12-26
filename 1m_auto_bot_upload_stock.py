@@ -25,15 +25,21 @@ def send_telegram(msg):
         print(f"[메시지 미리보기]\n{msg}")
         return
         
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}"
+    # URL 파라미터 분리 (특수문자 & 버그 해결)
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    params = {
+        'chat_id': CHAT_ID,
+        'text': msg
+    }
+    
     try: 
-        requests.get(url)
+        requests.get(url, params=params)
         print("전송 완료")
     except Exception as e: 
         print(f"전송 실패: {e}")
 
 def get_todays_signal():
-    print("🚀 [TOP 200 전략] 데이터 분석 시작...")
+    print("🚀 [TOP 200 변동성조절 전략] 데이터 분석 시작...")
     
     # 1. 대상 종목 리스트 구성
     target_tickers = {}
@@ -54,7 +60,7 @@ def get_todays_signal():
         # 달러 선물
         target_tickers['KODEX 미국달러선물'] = '261240'
         
-        print(f"-> 분석 대상: 총 {len(target_tickers)}개 종목 확보")
+        print(f"-> 분석 대상: 총 {len(target_tickers)}개 종목 후보 확보")
 
     except Exception as e:
         send_telegram(f"❌ 종목 리스트 확보 실패: {e}")
@@ -77,25 +83,25 @@ def get_todays_signal():
         total_count = len(target_tickers)
         
         for i, (name, code) in enumerate(target_tickers.items()):
-            # 진행 상황 출력
-            if i % 20 == 0: 
-                print(f"   수집 중... ({i}/{total_count})")
+            if i % 20 == 0: print(f"   수집 중... ({i}/{total_count})")
             
-            # [핵심 수정] 개별 종목 에러 무시 (try-except 추가)
+            # [삭제됨] if not code.isdigit(): continue 
+            # -> 숫자 검사 없이 일단 다 시도해봅니다.
+
             try:
-                # 1. 데이터 가져오기
                 df = fdr.DataReader(code, start=start_date, end=end_date)
                 
-                # 2. 데이터 검증 (비어있으면 에러 처리)
-                if df.empty:
-                    continue # 그냥 건너뜀
+                # 데이터가 없거나, 너무 짧으면(신규상장 등) 패스
+                if df.empty or len(df) < 120:
+                    continue
 
                 series = df['Close'].rename(name)
                 df_list.append(series)
                 
             except Exception as e:
-                # 에러 나면 출력만 하고 프로그램은 멈추지 않음
-                print(f"   [Pass] {name}({code}) 수집 실패")
+                # 다운로드 실패 시(404 등) 여기서 걸러지고 다음 종목으로 넘어감
+                # print(f"   [Pass] {name}({code}) 수집 실패") 
+                # 로그가 너무 많으면 위 print문은 주석 처리하셔도 됩니다.
                 continue
             
             time.sleep(0.05) # 차단 방지
@@ -109,14 +115,28 @@ def get_todays_signal():
         send_telegram(f"❌ 데이터 다운로드 치명적 오류: {e}")
         return
 
-    # 3. 전략 계산 (가중 평균 모멘텀)
+    # 3. 전략 계산 (변동성 조절 모멘텀)
     try:
-        mom_1m = raw_data.pct_change(20).iloc[-1]
-        mom_3m = raw_data.pct_change(60).iloc[-1]
-        mom_6m = raw_data.pct_change(120).iloc[-1]
+        # 3-1. 일별 수익률 (변동성 계산용)
+        daily_rets = raw_data.pct_change()
+        
+        # 3-2. 기간별 수익률
+        ret_3m = raw_data.pct_change(60).iloc[-1]
+        ret_6m = raw_data.pct_change(120).iloc[-1]
+        
+        # 3-3. 기간별 변동성 (표준편차)
+        vol_3m = daily_rets.rolling(60).std().iloc[-1]
+        vol_6m = daily_rets.rolling(120).std().iloc[-1]
+        
+        # 3-4. 스코어 계산 (Risk-Adjusted Return)
+        epsilon = 1e-6 # 0 나누기 방지
+        score_3m = ret_3m / (vol_3m + epsilon)
+        score_6m = ret_6m / (vol_6m + epsilon)
+        
+        # 3-5. 가중 평균 (1개월 제외, 3개월:40%, 6개월:60%)
+        weighted_score = (score_3m.fillna(0) * 0.4) + (score_6m.fillna(0) * 0.6)
 
-        weighted_score = (mom_1m.fillna(0) + mom_3m.fillna(0) + mom_6m.fillna(0)) / 3
-
+        # 시장 타이밍 (코스피 120일선)
         kospi_ma120 = kospi.rolling(window=120).mean().iloc[-1]
         current_kospi = kospi.iloc[-1]
         
@@ -128,7 +148,7 @@ def get_todays_signal():
         send_telegram(f"❌ 지표 계산 중 오류: {e}")
         return
 
-    # 4. 목표 종목 선정
+    # 4. 목표 종목 선정 (TOP 3)
     final_targets = [] 
     reason = ""
 
@@ -136,9 +156,10 @@ def get_todays_signal():
         scores = weighted_score.drop('KODEX 미국달러선물', errors='ignore')
         top_assets = scores.sort_values(ascending=False)
         
+        # 1등이 0점 이하면 (모두 하락세) -> 달러
         if top_assets.empty or top_assets.iloc[0] <= 0:
             final_targets = [('KODEX 미국달러선물', 1.0)]
-            reason = "주도주 부재 -> 달러 방어"
+            reason = "주도주 부재(스코어 저조) -> 달러 방어"
         else:
             selected = []
             for name, score in top_assets.items():
@@ -150,7 +171,7 @@ def get_todays_signal():
                 weight = 1.0 / count
                 for s in selected:
                     final_targets.append((s, weight))
-                reason = f"TOP {count} 모멘텀 분산"
+                reason = f"TOP {count} 변동성조절 모멘텀"
             else:
                 final_targets = [('KODEX 미국달러선물', 1.0)]
                 reason = "대상 종목 없음 -> 달러 방어"
@@ -163,8 +184,8 @@ def get_todays_signal():
     next_rebalance_date = (today_dt.replace(day=1) + timedelta(days=32)).replace(day=1)
     is_rebalance_period = (REBALANCE_PERIOD_START <= today_dt.day <= REBALANCE_PERIOD_END)
     
-    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 투자 비서\n"
-    msg += f"전략: TOP 200 유니버스 (TOP 3)\n"
+    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 국내 개별주\n"
+    msg += f"전략: 변동성조절 모멘텀 (TOP 3)\n"
     msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'}\n"
     msg += "-" * 20 + "\n"
     

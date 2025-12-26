@@ -136,7 +136,7 @@ def get_todays_signal():
     next_rebalance_date = (today_dt.replace(day=1) + timedelta(days=32)).replace(day=1)
     is_rebalance_period = (REBALANCE_PERIOD_START <= today_dt.day <= REBALANCE_PERIOD_END)
     
-    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 투자 비서\n"
+    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 국내 ETF\n"
     msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'}\n"
     msg += f"전략: 가중모멘텀 + TOP2 분산\n"
     msg += "-" * 20 + "\n"
