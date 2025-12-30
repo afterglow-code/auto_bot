@@ -48,17 +48,12 @@ def get_todays_signal():
     target_tickers = {}
     
     try:
-        # S&P 500 리스트 (나스닥/뉴욕거래소 우량주 포함)
         df_sp500 = fdr.StockListing('S&P500')
-        
-        # 상위 200개만 추출 (S&P500 리스트는 보통 시총 순 정렬되어 있거나 우량주 위주임)
         top_200 = df_sp500.head(200)
         
         for _, row in top_200.iterrows():
-            # 미국은 Symbol이 티커 (예: AAPL, MSFT)
             target_tickers[row['Symbol']] = row['Symbol']
 
-        # [필수] 하락장 방어용: 초단기 국채 ETF (BIL)
         target_tickers['BIL'] = 'BIL'
         
         print(f"-> 분석 대상: 총 {len(target_tickers)}개 종목 (S&P500 Top200 + BIL)")
@@ -75,34 +70,24 @@ def get_todays_signal():
     raw_data = pd.DataFrame()
     
     try:
-        # 2-1. 시장 지수 (SPY = S&P 500 ETF)
         spy_df = fdr.DataReader('SPY', start=start_date, end=end_date)
         market_index = spy_df['Close'].ffill()
 
-        # 2-2. 개별 종목 데이터 수집 Loop
         df_list = []
         total_count = len(target_tickers)
         
         for i, (name, code) in enumerate(target_tickers.items()):
-            # 진행 상황 출력
-            if i % 20 == 0: 
-                print(f"   수집 중... ({i}/{total_count})")
+            if i % 20 == 0: print(f"   수집 중... ({i}/{total_count})")
             
             try:
-                # 1. 데이터 가져오기 (미국 주식)
                 df = fdr.DataReader(code, start=start_date, end=end_date)
-                
-                # 2. 데이터 검증
                 if df.empty: continue
 
                 series = df['Close'].rename(name)
                 df_list.append(series)
-                
-            except Exception as e:
-                print(f"   [Pass] {code} 수집 실패")
+            except:
                 continue
             
-            # 미국 데이터는 야후 파이낸스라 차단 방지를 위해 딜레이 필수
             time.sleep(0.1) 
         
         if df_list:
@@ -122,7 +107,6 @@ def get_todays_signal():
 
         weighted_score = ((mom_1m.fillna(0) * 0.2) + (mom_3m.fillna(0) * 0.3) + (mom_6m.fillna(0) * 0.5))
 
-        # 시장 타이밍 (SPY 120일 이평선)
         spy_ma120 = market_index.rolling(window=120).mean().iloc[-1]
         current_spy = market_index.iloc[-1]
         
@@ -139,62 +123,76 @@ def get_todays_signal():
     reason = ""
 
     if is_bull_market:
-        # BIL(현금) 제외하고 점수 산출
         scores = weighted_score.drop('BIL', errors='ignore')
         top_assets = scores.sort_values(ascending=False)
         
-        # 1등이 0점 이하면 (모두 하락세) -> BIL
         if top_assets.empty or top_assets.iloc[0] <= 0:
             final_targets = [('BIL', 1.0)]
-            reason = "주도주 부재 -> BIL(초단기채) 방어"
+            reason = "주도주 부재 -> BIL 방어"
         else:
             selected = []
             for name, score in top_assets.items():
                 if score > 0: selected.append(name)
-                if len(selected) >= 3: break # TOP 3 분산
+                if len(selected) >= 3: break 
             
             count = len(selected)
             if count > 0:
                 weight = 1.0 / count
                 for s in selected:
                     final_targets.append((s, weight))
-                reason = f"US TOP {count} 모멘텀 분산"
+                reason = f"US TOP {count} 모멘텀"
             else:
                 final_targets = [('BIL', 1.0)]
                 reason = "대상 종목 없음 -> BIL 방어"
     else:
-        # 하락장 -> BIL
         final_targets = [('BIL', 1.0)]
-        reason = "하락장 방어(S&P500 < 120일선)"
+        reason = "하락장 방어(S&P500 이탈)"
 
-    # 5. 메시지 전송
+    # 5. 메시지 전송 (점수 표시 추가)
     today_dt = datetime.now()
     next_rebalance_date = (today_dt.replace(day=1) + timedelta(days=32)).replace(day=1)
     is_rebalance_period = (REBALANCE_PERIOD_START <= today_dt.day <= REBALANCE_PERIOD_END)
     
-    msg = f"🇺🇸 [{today_dt.strftime('%Y-%m-%d')}] 미국 개별주\n"
-    msg += f"전략: S&P 500 TOP 3 (가중모멘텀)\n"
-    msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'} (SPY 기준)\n"
+    msg = f"🇺🇸 [{today_dt.strftime('%Y-%m-%d')}] 미국 주식 봇\n"
+    msg += f"전략: S&P500 가중모멘텀 (0.2/0.3/0.5)\n"
+    msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'} (SPY)\n"
     msg += "-" * 20 + "\n"
     
+    # [수정된 메시지 생성 로직]
+    target_list_msg = ""
+    for name, weight in final_targets:
+        # 점수 가져오기 (BIL 등 예외 처리)
+        try:
+            current_score = weighted_score[name]
+        except:
+            current_score = 0.0
+        
+        # 점수에 따른 이모지 (미국장은 모멘텀 숫자가 더 크게 나옴)
+        score_emoji = ""
+        # 미국장은 추세가 강해서 0.3 이상이면 꽤 좋은 편
+        if current_score >= 0.5: score_emoji = "🔥🔥"
+        elif current_score >= 0.3: score_emoji = "🔥"
+        elif current_score > 0: score_emoji = "🙂"
+        else: score_emoji = "🛡️"
+
+        if name in raw_data.columns:
+            current_price = raw_data[name].iloc[-1]
+            buy_budget = MY_TOTAL_ASSETS * weight
+            buy_qty = int(buy_budget // current_price)
+            
+            target_list_msg += f"👉 {name} (점수: {current_score:.2f} {score_emoji})\n"
+            target_list_msg += f"   비중: {int(weight*100)}% (약 {buy_qty}주)\n"
+            target_list_msg += f"   현재가: ${current_price:.2f}\n"
+        else:
+             target_list_msg += f"👉 {name} (점수: {current_score:.2f})\n"
+
     if is_rebalance_period:
         msg += "🔔 [리밸런싱 주간입니다]\n"
         msg += f"사유: {reason}\n\n"
-        for name, weight in final_targets:
-            if name in raw_data.columns:
-                current_price = raw_data[name].iloc[-1]
-                buy_budget = MY_TOTAL_ASSETS * weight
-                buy_qty = int(buy_budget // current_price)
-                
-                msg += f"👉 {name}\n"
-                msg += f"   비중: {int(weight*100)}% (약 {buy_qty}주)\n"
-                msg += f"   현재가: ${current_price:.2f}\n"
-            else:
-                 msg += f"👉 {name} (가격 정보 로딩 실패)\n"
+        msg += target_list_msg
     else:
-        msg += f"☕ [관망 모드]\n이번 달 목표:\n"
-        for name, weight in final_targets:
-             msg += f"- {name} ({int(weight*100)}%)\n"
+        msg += f"☕ [관망 모드]\n이번 달 목표 (실시간 순위):\n"
+        msg += target_list_msg
         msg += f"\n다음 리밸런싱: {next_rebalance_date.strftime('%Y-%m-%d')}\n"
 
     print(msg)

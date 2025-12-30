@@ -131,35 +131,46 @@ def get_todays_signal():
         final_targets = [('KODEX 미국달러선물', 1.0)]
         reason = "하락장 방어(코스피 이탈)"
 
-    # 4. 메시지 생성
+    # 4. 메시지 생성 (점수 표시 추가)
     today_dt = datetime.now()
     next_rebalance_date = (today_dt.replace(day=1) + timedelta(days=32)).replace(day=1)
     is_rebalance_period = (REBALANCE_PERIOD_START <= today_dt.day <= REBALANCE_PERIOD_END)
     
-    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 국내 ETF\n"
-    msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'}\n"
+    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 국내 ETF 봇\n"
+    msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'} (KOSPI)\n"
     msg += f"전략: 가중모멘텀 + TOP2 분산\n"
     msg += "-" * 20 + "\n"
     
+    # [수정된 목록 생성 로직]
+    target_list_msg = ""
+    for name, weight in final_targets:
+        # 점수 가져오기 (달러선물은 weighted_score에 없을 수 있음)
+        try:
+            current_score = weighted_score[name]
+        except:
+            current_score = 0.0 # 달러선물 등
+        
+        # ETF용 이모지 기준 (ETF는 변동성이 낮아 기준을 낮춤)
+        score_emoji = ""
+        if current_score >= 1.0: score_emoji = "🔥🔥" # ETF가 1.0 넘으면 초대박
+        elif current_score >= 0.5: score_emoji = "🔥"
+        elif current_score > 0: score_emoji = "🙂"
+        else: score_emoji = "🛡️"
+
+        current_price = raw_data[name].iloc[-1]
+        buy_budget = MY_TOTAL_ASSETS * weight
+        buy_qty = int(buy_budget // current_price)
+        
+        target_list_msg += f"👉 {name} (점수: {current_score:.2f} {score_emoji})\n"
+        target_list_msg += f"   비중: {int(weight*100)}% (약 {buy_qty}주)\n"
+
     if is_rebalance_period:
         msg += "🔔 [리밸런싱 주간입니다]\n"
         msg += f"사유: {reason}\n\n"
-        
-        # 추천 종목 리스트 출력
-        for name, weight in final_targets:
-            current_price = raw_data[name].iloc[-1]
-            buy_budget = MY_TOTAL_ASSETS * weight
-            buy_qty = int(buy_budget // current_price)
-            
-            msg += f"👉 {name}\n"
-            msg += f"   비중: {int(weight*100)}% (약 {buy_qty}주)\n"
-            
+        msg += target_list_msg
     else:
-        msg += f"☕ [관망 모드]\n"
-        msg += f"이번 달 목표 구성:\n"
-        for name, weight in final_targets:
-             msg += f"- {name} ({int(weight*100)}%)\n"
-             
+        msg += f"☕ [관망 모드]\n이번 달 목표 (실시간 순위):\n"
+        msg += target_list_msg
         msg += f"\n다음 리밸런싱: {next_rebalance_date.strftime('%Y-%m-%d')}\n"
 
     print(msg)
