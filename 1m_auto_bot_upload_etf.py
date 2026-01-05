@@ -86,7 +86,7 @@ def get_todays_signal():
 
     # 종합 점수 (단기+중기+장기 평균)
     # 신규 상장주라 6개월 데이터가 없으면(NaN) 0점 처리하여 안전하게 제외
-    weighted_score = ((mom_1m.fillna(0) * 0.2) + (mom_3m.fillna(0) * 0.3) + (mom_6m.fillna(0) * 0.5))
+    weighted_score = ((mom_1m.fillna(0) * 0.3) + (mom_3m.fillna(0) * 0.3) + (mom_6m.fillna(0) * 0.4))
 
     # 시장 타이밍 (코스피 120일선)
     kospi_ma120 = kospi.rolling(window=120).mean().iloc[-1]
