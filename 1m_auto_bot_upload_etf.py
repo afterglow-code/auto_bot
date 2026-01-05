@@ -75,6 +75,7 @@ def get_todays_signal():
 
     except Exception as e:
         send_telegram(f"❌ 오류 발생: {e}")
+        print(f"분석 실패: {e}")
         return
 
     # 2. [핵심] 가중 평균 모멘텀 계산
