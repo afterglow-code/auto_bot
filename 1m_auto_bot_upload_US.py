@@ -105,7 +105,7 @@ def get_todays_signal():
         mom_3m = raw_data.pct_change(60).iloc[-1]
         mom_6m = raw_data.pct_change(120).iloc[-1]
 
-        weighted_score = ((mom_1m.fillna(0) * 0.2) + (mom_3m.fillna(0) * 0.3) + (mom_6m.fillna(0) * 0.5))
+        weighted_score = ((mom_1m.fillna(0) * 0.3) + (mom_3m.fillna(0) * 0.3) + (mom_6m.fillna(0) * 0.4))
 
         spy_ma120 = market_index.rolling(window=120).mean().iloc[-1]
         current_spy = market_index.iloc[-1]

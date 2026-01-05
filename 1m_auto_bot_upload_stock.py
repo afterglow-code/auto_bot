@@ -119,7 +119,7 @@ def get_todays_signal():
         score_3m = ret_3m / (vol_3m + epsilon)
         score_6m = ret_6m / (vol_6m + epsilon)
         
-        weighted_score = (score_3m.fillna(0) * 0.4) + (score_6m.fillna(0) * 0.6)
+        weighted_score = (score_3m.fillna(0) * 0.5) + (score_6m.fillna(0) * 0.5)
 
         kospi_ma120 = kospi.rolling(window=120).mean().iloc[-1]
         current_kospi = kospi.iloc[-1]
