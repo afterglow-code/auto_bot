@@ -121,13 +121,13 @@ def get_todays_signal():
         
         weighted_score = (score_3m.fillna(0) * 0.5) + (score_6m.fillna(0) * 0.5)
 
-        kospi_ma120 = kospi.rolling(window=120).mean().iloc[-1]
+        kospi_ma60 = kospi.rolling(window=60).mean().iloc[-1]
         current_kospi = kospi.iloc[-1]
         
         if hasattr(current_kospi, 'item'): current_kospi = current_kospi.item()
-        if hasattr(kospi_ma120, 'item'): kospi_ma120 = kospi_ma120.item()
+        if hasattr(kospi_ma60, 'item'): kospi_ma60 = kospi_ma60.item()
 
-        is_bull_market = current_kospi > kospi_ma120
+        is_bull_market = current_kospi > kospi_ma60
     except Exception as e:
         send_telegram(f"❌ 지표 계산 중 오류: {e}")
         return
