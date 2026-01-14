@@ -117,7 +117,7 @@ def get_todays_signal():
         
         epsilon = 1e-6 
         score_3m = ret_3m / (vol_3m + epsilon)
-        score_6m = ret_6m / (vol_6m + epsilon)
+        score_6m = ret_6m / (vol_3m + epsilon)
         
         weighted_score = (score_3m.fillna(0) * 0.5) + (score_6m.fillna(0) * 0.5)
 
