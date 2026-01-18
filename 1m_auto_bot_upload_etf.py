@@ -5,6 +5,7 @@ import requests
 import os
 import time
 
+
 # =========================================================
 # [사용자 설정 영역]
 # =========================================================
@@ -18,20 +19,34 @@ REBALANCE_PERIOD_START = 1
 REBALANCE_PERIOD_END = 7
 # =========================================================
 
+
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ 텔레그램 설정이 없습니다. 메시지를 보내지 않습니다.")
+        print(f"[메시지 미리보기]\n{msg}")
         return
         
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    params = {
+        'chat_id': CHAT_ID,
+        'text': msg,
+        'parse_mode': 'HTML'  # HTML 포맷 지원
+    }
     try: 
-        requests.get(url)
-        print("전송 완료")
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print("✅ 텔레그램 전송 완료")
+        else:
+            print(f"⚠️ 텔레그램 전송 실패: {response.status_code}")
     except Exception as e: 
-        print(f"전송 실패: {e}")
+        print(f"❌ 전송 오류: {e}")
+
 
 def get_todays_signal():
-    print("데이터 분석 중 (가중평균 + TOP2 전략)...")
+    print("="*70)
+    print("📊 한국 ETF 가중모멘텀 전략 신호 생성기")
+    print("="*70)
+    print("⏳ 데이터 분석 중...")
     
     # 1. 데이터 준비
     etf_tickers = {
@@ -41,14 +56,13 @@ def get_todays_signal():
         'KODEX 반도체': '091160',
         'KODEX 헬스케어': '266420',
         'KODEX 미국달러선물': '261240',
-        'KODEX AI전력핵심설비' : '487240',
-        'ACE 구글벨류체인액티브' : '483340',
+        'KODEX AI전력핵심설비': '487240',
+        'ACE 구글벨류체인액티브': '483340',
         'PLUS K방산': '449170',
         'KODEX 미국30년국채액티브(H)': '484790'
     }
     
     end_date = datetime.now().strftime("%Y-%m-%d")
-    # 가중 평균(6개월) 계산을 위해 넉넉히 365일 전부터 조회
     start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     
     kospi = None
@@ -66,10 +80,11 @@ def get_todays_signal():
             if not df.empty:
                 series = df['Close'].rename(name)
                 df_list.append(series)
-            time.sleep(0.1) # 차단 방지
+            time.sleep(0.1)
         
         if df_list:
             raw_data = pd.concat(df_list, axis=1).ffill().dropna()
+            print(f"✅ {len(raw_data.columns)}개 ETF 데이터 수집 완료")
         else:
             raise Exception("데이터 수집 실패")
 
@@ -78,14 +93,11 @@ def get_todays_signal():
         print(f"분석 실패: {e}")
         return
 
-    # 2. [핵심] 가중 평균 모멘텀 계산
-    # 최근 데이터(iloc[-1]) 기준으로 1개월(20일), 3개월(60일), 6개월(120일) 수익률 계산
+    # 2. 가중 평균 모멘텀 계산
     mom_1m = raw_data.pct_change(20).iloc[-1]
     mom_3m = raw_data.pct_change(60).iloc[-1]
     mom_6m = raw_data.pct_change(120).iloc[-1]
 
-    # 종합 점수 (단기+중기+장기 평균)
-    # 신규 상장주라 6개월 데이터가 없으면(NaN) 0점 처리하여 안전하게 제외
     weighted_score = ((mom_1m.fillna(0) * 0.3) + (mom_3m.fillna(0) * 0.3) + (mom_6m.fillna(0) * 0.4))
 
     # 시장 타이밍 (코스피 120일선)
@@ -96,86 +108,170 @@ def get_todays_signal():
     if hasattr(kospi_ma120, 'item'): kospi_ma120 = kospi_ma120.item()
 
     is_bull_market = current_kospi > kospi_ma120
+    
+    print(f"✅ 시장 판단: {'🔴 상승장' if is_bull_market else '🔵 하락장'}")
 
-    # 3. [핵심] 목표 종목 선정 (TOP 2 분산)
-    final_targets = [] # [(종목명, 비중), (종목명, 비중)] 형태
+    # 3. 목표 종목 선정 (TOP 2 분산)
+    final_targets = []
     reason = ""
+    all_rankings = []  # 전체 순위 저장
 
     if is_bull_market:
-        # 달러 제외하고 점수 산출
         scores = weighted_score.drop('KODEX 미국달러선물', errors='ignore')
-        
-        # 점수 높은 순 정렬
         top_assets = scores.sort_values(ascending=False)
         
-        # 1등이 0점 이하면 (모두 하락세) -> 달러
+        # 전체 순위 저장 (메시지용)
+        for rank, (name, score) in enumerate(top_assets.items(), 1):
+            all_rankings.append({
+                'rank': rank,
+                'name': name,
+                'score': score,
+                'price': raw_data[name].iloc[-1]
+            })
+        
         if top_assets.empty or top_assets.iloc[0] <= 0:
             final_targets = [('KODEX 미국달러선물', 1.0)]
-            reason = "주도주 부재(모두 하락) -> 달러 방어"
+            reason = "주도주 부재 → 달러 방어"
         else:
-            # 1등과 2등을 뽑음 (점수가 양수인 경우만)
             selected = []
             for name, score in top_assets.items():
                 if score > 0:
                     selected.append(name)
                 if len(selected) >= 2: break
             
-            # 종목 수에 따라 비중 결정
             if len(selected) == 1:
-                final_targets = [(selected[0], 1.0)] # 1개면 몰빵
-                reason = f"단독 주도주: {selected[0]}"
+                final_targets = [(selected[0], 1.0)]
+                reason = f"단독 주도주"
             else:
-                final_targets = [(selected[0], 0.5), (selected[1], 0.5)] # 2개면 반반
-                reason = f"TOP 2 분산: {selected[0]}, {selected[1]}"
+                final_targets = [(selected[0], 0.5), (selected[1], 0.5)]
+                reason = f"TOP 2 분산"
     else:
-        # 하락장 -> 달러 방어
+        # 하락장에도 순위는 보여주기
+        scores = weighted_score.drop('KODEX 미국달러선물', errors='ignore')
+        top_assets = scores.sort_values(ascending=False)
+        
+        for rank, (name, score) in enumerate(top_assets.items(), 1):
+            all_rankings.append({
+                'rank': rank,
+                'name': name,
+                'score': score,
+                'price': raw_data[name].iloc[-1]
+            })
+        
         final_targets = [('KODEX 미국달러선물', 1.0)]
-        reason = "하락장 방어(코스피 이탈)"
+        reason = "하락장 방어 (KOSPI < MA120)"
 
-    # 4. 메시지 생성 (점수 표시 추가)
+    # 4. 메시지 생성 (HTML 포맷)
     today_dt = datetime.now()
     next_rebalance_date = (today_dt.replace(day=1) + timedelta(days=32)).replace(day=1)
     is_rebalance_period = (REBALANCE_PERIOD_START <= today_dt.day <= REBALANCE_PERIOD_END)
     
-    msg = f"📅 [{today_dt.strftime('%Y-%m-%d')}] 국내 ETF 봇\n"
-    msg += f"시장: {'🔴상승장' if is_bull_market else '🔵하락장'} (KOSPI)\n"
-    msg += f"전략: 가중모멘텀 + TOP2 분산\n"
-    msg += "-" * 20 + "\n"
+    # HTML 포맷으로 메시지 작성
+    msg = f"<b>🇰🇷 한국 ETF 가중모멘텀 전략 [{today_dt.strftime('%Y-%m-%d')}]</b>\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
     
-    # [수정된 목록 생성 로직]
-    target_list_msg = ""
-    for name, weight in final_targets:
-        # 점수 가져오기 (달러선물은 weighted_score에 없을 수 있음)
-        try:
-            current_score = weighted_score[name]
-        except:
-            current_score = 0.0 # 달러선물 등
-        
-        # ETF용 이모지 기준 (ETF는 변동성이 낮아 기준을 낮춤)
-        score_emoji = ""
-        if current_score >= 1.0: score_emoji = "🔥🔥" # ETF가 1.0 넘으면 초대박
-        elif current_score >= 0.5: score_emoji = "🔥"
-        elif current_score > 0: score_emoji = "🙂"
-        else: score_emoji = "🛡️"
-
-        current_price = raw_data[name].iloc[-1]
-        buy_budget = MY_TOTAL_ASSETS * weight
-        buy_qty = int(buy_budget // current_price)
-        
-        target_list_msg += f"👉 {name} (점수: {current_score:.2f} {score_emoji})\n"
-        target_list_msg += f"   비중: {int(weight*100)}% (약 {buy_qty}주)\n"
-
+    # 전략 정보
+    msg += f"📊 <b>전략 구성</b>\n"
+    msg += f"  • 1개월: 30%\n"
+    msg += f"  • 3개월: 30%\n"
+    msg += f"  • 6개월: 40%\n"
+    msg += f"  • 보유: TOP 2 분산\n\n"
+    
+    # 시장 상태
+    kospi_change = ((current_kospi - kospi_ma120) / kospi_ma120) * 100
+    msg += f"📈 <b>시장 상태</b>\n"
+    msg += f"  • KOSPI: {current_kospi:,.2f}\n"
+    msg += f"  • MA120: {kospi_ma120:,.2f}\n"
+    msg += f"  • 시장: {'🔴 상승장' if is_bull_market else '🔵 하락장'} ({kospi_change:+.1f}%)\n\n"
+    
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # 리밸런싱 여부에 따라 메시지 구분
     if is_rebalance_period:
-        msg += "🔔 [리밸런싱 주간입니다]\n"
+        msg += f"🔔 <b>리밸런싱 주간</b>\n"
         msg += f"사유: {reason}\n\n"
-        msg += target_list_msg
+        
+        msg += f"💼 <b>매수 종목 ({len(final_targets)}개)</b>\n\n"
+        
+        for name, weight in final_targets:
+            # 점수 가져오기
+            try:
+                current_score = weighted_score[name]
+            except:
+                current_score = 0.0
+            
+            # 점수에 따른 이모지
+            if current_score >= 0.15:
+                emoji = "🔥🔥"
+            elif current_score >= 0.08:
+                emoji = "🔥"
+            elif current_score > 0:
+                emoji = "⭐"
+            else:
+                emoji = "🛡️"
+            
+            # 순위 찾기
+            rank = next((r['rank'] for r in all_rankings if r['name'] == name), '-')
+            
+            current_price = raw_data[name].iloc[-1] if name in raw_data.columns else 0
+            buy_budget = MY_TOTAL_ASSETS * weight
+            buy_qty = int(buy_budget // current_price) if current_price > 0 else 0
+            
+            if name == 'KODEX 미국달러선물':
+                msg += f"<b>🛡️ {name}</b>\n"
+                msg += f"  • 비중: {weight*100:.0f}%\n"
+                msg += f"  • 사유: {reason}\n\n"
+            else:
+                msg += f"<b>{rank}위. {name}</b> {emoji}\n"
+                msg += f"  • 가격: {current_price:,.0f}원 | 수량: {buy_qty}주\n"
+                msg += f"  • 비중: {weight*100:.0f}% ({int(buy_budget):,}원)\n"
+                msg += f"  • 점수: {current_score:.3f}\n\n"
+    
     else:
-        msg += f"☕ [관망 모드]\n이번 달 목표 (실시간 순위):\n"
-        msg += target_list_msg
-        msg += f"\n다음 리밸런싱: {next_rebalance_date.strftime('%Y-%m-%d')}\n"
-
-    print(msg)
+        msg += f"☕ <b>관망 모드</b>\n"
+        msg += f"다음 리밸런싱: {next_rebalance_date.strftime('%m월 %d일')}\n\n"
+        
+        msg += f"📋 <b>현재 순위 (달러 제외)</b>\n\n"
+        
+        # 상위 5개는 상세, 나머지는 간략
+        for info in all_rankings:
+            rank = info['rank']
+            name = info['name']
+            score = info['score']
+            price = info['price']
+            
+            if rank <= 5:
+                # 점수에 따른 이모지
+                if score >= 0.15:
+                    emoji = "🔥🔥"
+                elif score >= 0.08:
+                    emoji = "🔥"
+                elif score > 0:
+                    emoji = "⭐"
+                else:
+                    emoji = "💤"
+                
+                msg += f"<b>{rank}위. {name}</b> {emoji}\n"
+                msg += f"  • 점수: {score:.3f}\n"
+                msg += f"  • 가격: {price:,.0f}원\n\n"
+            else:
+                # 6위 이하는 간략하게
+                msg += f"{rank}위. {name} ({score:.3f})\n"
+    
+    msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"<i>투자 원금: {MY_TOTAL_ASSETS:,}원</i>"
+    
+    # 콘솔 출력 (HTML 태그 제거 버전)
+    print("\n" + "="*70)
+    print("메시지 미리보기:")
+    print("="*70)
+    import re
+    clean_msg = re.sub('<.*?>', '', msg)
+    print(clean_msg)
+    print("="*70)
+    
     send_telegram(msg)
+
 
 if __name__ == "__main__":
     get_todays_signal()
