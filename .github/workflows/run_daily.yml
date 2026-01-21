@@ -38,7 +38,7 @@ jobs:
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
-      run: python multiFactor_KR_stock.py
+      run: python 1m_auto_bot_upload_stock.py
       #run: python yf_fdr_INDV_KO.py
       continue-on-error: true 
 
@@ -47,4 +47,4 @@ jobs:
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
-      run: python multiFactor_US_stock.py
+      run: python 1m_auto_bot_upload_US_stock.py
