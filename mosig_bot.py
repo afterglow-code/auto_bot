@@ -67,21 +67,18 @@ def get_latest_signals():
             daybefore = df.iloc[-3]
             
             # ---------------------------------------------------------
-            # [전략 로직] 골든크로스 포착 (Golden Cross Breakout)
-            # 조건 1: 오늘(또는 어제) 모멘텀 > 시그널 (현재 정배열)
-            # 조건 2: 어제(또는 그제) 모멘텀 <= 시그널 (과거 역배열) -> 즉, 최근에 뚫음
-            # 조건 3: 모멘텀 절대값 >= 100 (상승 추세)
+            # [전략 로직 수정] 모멘텀 100선 돌파 (100 Line Breakout)
+            # 조건 1: 오늘(최신) 모멘텀이 100 이상 (상승 추세 진입)
+            # 조건 2: 어제(직전) 모멘텀은 100 미만 (돌파 발생)
+            # 조건 3: 모멘텀 > 시그널 (정배열 상태여야 안전함)
             # ---------------------------------------------------------
             
-            # Case A: 장 마감 후 (오늘 확정치 기준 돌파 확인)
-            is_breakout = (today['Momentum'] > today['Signal']) and \
-                          (yesterday['Momentum'] <= yesterday['Signal']) and \
-                          (today['Momentum'] >= 100)
+            # 장 마감 후 기준 (today=최신봉, yesterday=직전봉)
+            is_100_breakout = (today['Momentum'] >= 100) and \
+                              (yesterday['Momentum'] < 100) and \
+                              (today['Momentum'] > today['Signal'])
                           
-            # 만약 장 중이라 '오늘' 데이터가 변동 중이라면, 어제 종가 기준으로 확실히 뜬 걸 잡을 수도 있음.
-            # 여기서는 '가장 최신봉' 기준으로 잡습니다.
-            
-            if is_breakout:
+            if is_100_breakout:
                 candidates.append({
                     'Code': code,
                     'Name': name,
