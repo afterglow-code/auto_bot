@@ -6,6 +6,7 @@ on:
     # (UTC 기준 일~목 23:20)
     # 0=Sun, 1=Mon, ..., 4=Thu
     - cron: '20 23 * * 0-4'
+    - cron: '30 9 * * 0-4'
   workflow_dispatch: # 수동 실행 버튼 추가
 
 jobs:
@@ -48,3 +49,11 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
       run: python 1m_auto_bot_upload_US.py
+      continue-on-error: true 
+
+    - name: Run MoSig Bot
+      if: always() 
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID_1P }}
+      run: python mosig_bot.py
