@@ -9,7 +9,7 @@ import time
 # [사용자 설정] 여기에 텔레그램 정보를 넣으세요
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('CHAT_ID')
+TELEGRAM_CHAT_ID = os.environ.get('CHAT_ID_1P')
 
 # 전략 설정
 TOP_N_KOSPI = 200   # 코스피 감시 대상 (시총 상위)
