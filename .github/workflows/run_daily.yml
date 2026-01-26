@@ -2,12 +2,23 @@ name: Daily Stock Bot
 
 on:
   schedule:
-    # 한국 시간 월~금 오전 08:20 실행
-    # (UTC 기준 일~목 23:20)
-    # 0=Sun, 1=Mon, ..., 4=Thu
+    # 한국 시간 월~금 오전 08:20, 오후 18:30 실행
     - cron: '20 23 * * 0-4'
     - cron: '30 9 * * 0-4'
-  workflow_dispatch: # 수동 실행 버튼 추가
+  
+  workflow_dispatch: # 수동 실행 버튼 + 옵션 추가
+    inputs:
+      target:
+        description: '실행할 봇 선택'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - etf
+          - stock
+          - us_stock
+          - mosig
 
 jobs:
   build:
@@ -26,34 +37,50 @@ jobs:
       run: |
         pip install -r requirements.txt
 
+    # 1. ETF Bot
     - name: Run ETF Bot
+      # 스케줄 실행이거나, 'all' 선택이거나, 'etf' 선택일 때만 실행
+      if: |
+        always() && 
+        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'etf')
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
-      #run: python yf_fdr_ETF.py
       run: python 1m_auto_bot_upload_etf.py
       continue-on-error: true 
 
+    # 2. Stock Bot (국내)
     - name: Run Stock Bot
-      if: always() 
+      # 스케줄 실행이거나, 'all' 선택이거나, 'stock' 선택일 때만 실행
+      if: |
+        always() && 
+        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'stock')
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
       run: python 1m_auto_bot_upload_stock.py
-      #run: python yf_fdr_INDV_KO.py
       continue-on-error: true 
 
+    # 3. US Stock Bot (미국)
     - name: Run US Stock Bot
-      if: always() 
+      # 스케줄 실행이거나, 'all' 선택이거나, 'us_stock' 선택일 때만 실행
+      if: |
+        always() && 
+        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'us_stock')
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
       run: python 1m_auto_bot_upload_US.py
       continue-on-error: true 
 
+    # 4. MoSig Bot (모멘텀 시그널)
     - name: Run MoSig Bot
-      if: always() 
+      # 스케줄 실행이거나, 'all' 선택이거나, 'mosig' 선택일 때만 실행
+      if: |
+        always() && 
+        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'mosig')
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID_1P: ${{ secrets.CHAT_ID_1P }}
       run: python mosig_bot.py
+      continue-on-error: true
