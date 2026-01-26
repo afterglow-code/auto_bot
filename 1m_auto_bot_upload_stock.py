@@ -47,13 +47,13 @@ def get_todays_signal():
     try:
         # KOSPI
         df_kospi = fdr.StockListing('KOSPI')
-        top_kospi = df_kospi.sort_values('Marcap', ascending=False).head(100)
+        top_kospi = df_kospi.sort_values('Marcap', ascending=False).head(200)
         for _, row in top_kospi.iterrows():
             target_tickers[row['Name']] = row['Code']
 
         # KOSDAQ
         df_kosdaq = fdr.StockListing('KOSDAQ')
-        top_kosdaq = df_kosdaq.sort_values('Marcap', ascending=False).head(100)
+        top_kosdaq = df_kosdaq.sort_values('Marcap', ascending=False).head(150)
         for _, row in top_kosdaq.iterrows():
             target_tickers[row['Name']] = row['Code']
 
