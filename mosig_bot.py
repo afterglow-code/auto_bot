@@ -13,7 +13,7 @@ TELEGRAM_CHAT_ID = os.environ.get('CHAT_ID_1P')
 
 # 전략 설정
 TOP_N_KOSPI = 200   # 코스피 감시 대상 (시총 상위)
-TOP_N_KOSDAQ = 100  # 코스닥 감시 대상 (시총 상위)
+TOP_N_KOSDAQ = 150  # 코스닥 감시 대상 (시총 상위)
 PICK_COUNT = 10     # 텔레그램으로 보낼 종목 수
 STRATEGY = 'value'  # 우선순위: 'value'(모멘텀점수), 'slope'(기울기), 'marcap'(시총)
 
