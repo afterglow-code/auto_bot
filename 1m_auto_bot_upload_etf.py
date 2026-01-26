@@ -59,7 +59,8 @@ def get_todays_signal():
         'KODEX AI전력핵심설비': '487240',
         'ACE 구글벨류체인액티브': '483340',
         'PLUS K방산': '449170',
-        'KODEX 미국30년국채액티브(H)': '484790'
+        'KODEX 미국30년국채액티브(H)': '484790',
+        'KODEX 코스닥150': '229200',
     }
     
     end_date = datetime.now().strftime("%Y-%m-%d")
