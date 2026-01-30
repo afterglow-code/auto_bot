@@ -102,7 +102,7 @@ def ui_ranking_list(rank_data, is_us=False, limit=50):
     c3.caption("점수")
     c4.caption("현재가")
     c5.caption("분석")
-    st.divider()
+    st.markdown("<hr style='margin: 0.1rem 0;'>", unsafe_allow_html=True)
 
     for item in rank_data[:limit]:
         with st.container():
@@ -121,7 +121,7 @@ def ui_ranking_list(rank_data, is_us=False, limit=50):
                     st.button(f"{code_label}", key=f"rk_btn_{item['code']}_{item['rank']}_{int(time.time())}", 
                               on_click=set_analysis_target, args=(item['code'], item['price']), use_container_width=True)
                 else: st.caption("-")
-        st.markdown("<hr style='margin: 0.2rem 0; opacity: 0.3;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin: 0.1rem 0; opacity: 0.3;'>", unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
 # [로직] 데이터 계산
