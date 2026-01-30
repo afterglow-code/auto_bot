@@ -26,3 +26,5 @@ Temporary Items
 .env
 .vscode/
 .idea/
+__pycache__/
+*.pyc
