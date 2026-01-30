@@ -34,8 +34,9 @@ plt.style.use('ggplot')
 st.markdown("""
     <style>
         .block-container {padding-top: 1rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem;}
-        div[data-testid="stVerticalBlock"] > div {gap: 0.5rem;}
+        div[data-testid="stVerticalBlock"] > div {gap: 0.2rem;}
         .stButton button {height: 2em; padding-top: 0; padding-bottom: 0;}
+        .element-container {margin-bottom: 0.2rem !important;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -75,12 +76,12 @@ def ui_card_header(title, status, reason):
     c1, c2 = st.columns([1.5, 1])
     with c1: st.markdown(f"**{title}**")
     with c2: st.markdown(f"{icon} :{color}[**{status}**] <span style='font-size:0.8em; color:gray'>({reason})</span>", unsafe_allow_html=True)
-    st.divider()
+    st.markdown("<hr style='margin: 0.3rem 0;'>", unsafe_allow_html=True)
 
 def ui_target_row(rank, name, code, weight, price, is_us=False):
     c1, c2, c3, c4 = st.columns([2.5, 2, 1.2, 0.8])
     with c1:
-        st.write(f"{rank}. {name}")
+        st.markdown(f"<div style='margin-bottom: -0.5rem;'>{rank}. {name}</div>", unsafe_allow_html=True)
         if code and code != name: st.caption(f"{code}")
     with c2:
         st.progress(weight)
@@ -120,7 +121,7 @@ def ui_ranking_list(rank_data, is_us=False, limit=50):
                     st.button(f"{code_label}", key=f"rk_btn_{item['code']}_{item['rank']}_{int(time.time())}", 
                               on_click=set_analysis_target, args=(item['code'], item['price']), use_container_width=True)
                 else: st.caption("-")
-        st.divider()
+        st.markdown("<hr style='margin: 0.2rem 0; opacity: 0.3;'>", unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
 # [로직] 데이터 계산
@@ -400,7 +401,7 @@ def main():
     st.divider()
 
     # --- 메인 레이아웃 (좌우 2단 분할) ---
-    col_left, col_right = st.columns([1.1, 0.9])
+    col_left, col_right = st.columns([0.85, 1.15])
 
     # [왼쪽] 모멘텀 신호 카드 스택
     with col_left:
