@@ -481,3 +481,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# streamlit run auto_bot/dashboard/app.py
