@@ -28,3 +28,4 @@ Temporary Items
 .idea/
 __pycache__/
 *.pyc
+dashboard_data.pkl
