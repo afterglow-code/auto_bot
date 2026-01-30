@@ -237,7 +237,7 @@ class USTopStocks_Backtester:
 
 if __name__ == "__main__":
     # 자본금 $10,000로 시작
-    bt = USTopStocks_Backtester(start_date='2021-01-01', end_date='2026-01-01', initial_capital=10000)
+    bt = USTopStocks_Backtester(start_date='2020-01-01', end_date='2026-01-01', initial_capital=10000)
     
     # S&P 500 리스트 확보
     bt.fetch_top_stocks()

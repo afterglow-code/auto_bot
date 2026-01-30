@@ -12,7 +12,7 @@ import config as cfg
 
 def get_todays_signal():
     print("="*70)
-    print("📊 미국 주식 가중모멘텀")
+    print("📊 미국 주식 가중모멘텀 전략 (S&P500 Top 200)")
     print("="*70)
     
     # 1. 대상 종목 리스트 구성
@@ -66,12 +66,18 @@ def get_todays_signal():
 
         weighted_score = (mom_1m.fillna(0) * w1) + (mom_3m.fillna(0) * w2) + (mom_6m.fillna(0) * w3)
 
-        # 시장 타이밍 (SPY 120일선)
-        ma120 = market_index.rolling(window=120).mean().iloc[-1]
+        # 시장 타이밍 (SPY 60일선)
+        ma_series = market_index.rolling(window=60).mean()
+        current_ma = ma_series.iloc[-1]
+        prev_ma = ma_series.iloc[-6] # 5일 전 MA
         current_market_index = market_index.iloc[-1]
         
-        is_bull_market = current_market_index > ma120
-        print(f"✅ 시장 판단: {'🔴 상승장' if is_bull_market else '🔵 하락장'}")
+        ma_is_rising = current_ma > prev_ma
+        is_bull_market = current_market_index > current_ma
+        is_neutral_market = not is_bull_market and ma_is_rising
+
+        market_status = "🔴 상승장" if is_bull_market else "🟠 중립장" if is_neutral_market else "🔵 하락장"
+        print(f"✅ 시장 판단: {market_status}")
 
     except Exception as e:
         error_msg = f"❌ [미국 주식 봇] 지표 계산 중 오류: {e}"
@@ -83,17 +89,17 @@ def get_todays_signal():
     final_targets = [] 
     reason = ""
     defense_asset = cfg.US_DEFENSE_ASSET
+    scores = weighted_score.drop(defense_asset, errors='ignore')
+    top_assets = scores.sort_values(ascending=False)
 
+    # 상승장: 공격 100%
     if is_bull_market:
-        scores = weighted_score.drop(defense_asset, errors='ignore')
-        top_assets = scores.sort_values(ascending=False)
-        
+        reason = "상승장 투자"
         if top_assets.empty or top_assets.iloc[0] <= 0:
             final_targets = [(defense_asset, 1.0)]
             reason = "주도주 부재 -> BIL 방어"
         else:
             selected = [name for name, score in top_assets.items() if score > 0][:cfg.US_TOP_N]
-            
             count = len(selected)
             if count > 0:
                 weight = 1.0 / count
@@ -102,12 +108,33 @@ def get_todays_signal():
             else:
                 final_targets = [(defense_asset, 1.0)]
                 reason = "대상 종목 없음 -> BIL 방어"
+
+    # 중립장: 공격 50%, 방어 50%
+    elif is_neutral_market:
+        reason = "중립장 분산 투자"
+        if top_assets.empty or top_assets.iloc[0] <= 0:
+            final_targets = [(defense_asset, 1.0)]
+            reason = "주도주 부재 -> BIL 100% 방어"
+        else:
+            selected = [name for name, score in top_assets.items() if score > 0][:cfg.US_TOP_N]
+            count = len(selected)
+            if count > 0:
+                weight = 0.5 / count # 공격 자산 비중 50%
+                final_targets = [(s, weight) for s in selected]
+                final_targets.append((defense_asset, 0.5)) # 방어 자산 비중 50%
+                reason = f"US TOP {count} 모멘텀 (50% 공격)"
+            else:
+                final_targets = [(defense_asset, 1.0)]
+                reason = "대상 종목 없음 -> BIL 100% 방어"
+
+    # 하락장: 방어 100%
     else:
         final_targets = [(defense_asset, 1.0)]
         reason = f"하락장 방어({cfg.US_MARKET_INDEX} 이탈)"
 
+
     # 5. 메시지 전송
-    msg = create_message(is_bull_market, final_targets, reason, weighted_score, raw_data)
+    msg = create_message(is_bull_market, is_neutral_market, final_targets, reason, weighted_score, raw_data)
     
     print("\n" + "="*70)
     print("메시지 미리보기:")
@@ -118,14 +145,16 @@ def get_todays_signal():
 
     send_telegram(msg, parse_mode='Markdown')
 
-def create_message(is_bull_market, final_targets, reason, weighted_score, raw_data):
+def create_message(is_bull_market, is_neutral_market, final_targets, reason, weighted_score, raw_data):
     """텔레그램 메시지를 생성하는 함수 (Markdown 포맷)"""
     today_dt = datetime.now()
     is_rebalance_period = (cfg.REBALANCE_PERIOD_START <= today_dt.day <= cfg.REBALANCE_PERIOD_END)
     
+    market_status_emoji = "🔴 상승장" if is_bull_market else "🟠 중립장" if is_neutral_market else "🔵 하락장"
+
     msg = f"🇺🇸 *[{today_dt.strftime('%Y-%m-%d')}] 미국 주식 봇*\n"
     msg += f"전략: S&P500 가중모멘텀 (TOP {cfg.US_TOP_N})\n"
-    msg += f"시장: {'🔴 상승장' if is_bull_market else '🔵 하락장'} ({cfg.US_MARKET_INDEX})\n"
+    msg += f"시장: {market_status_emoji} ({cfg.US_MARKET_INDEX})\n"
     msg += "---------------------------------\"n"
     
     target_list_msg = ""
