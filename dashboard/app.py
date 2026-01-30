@@ -7,6 +7,11 @@ import platform
 import time
 import pickle
 import os
+import logging
+
+# [설정] 스레드 컨텍스트 경고 메시지 차단 (기능에는 영향 없음)
+logging.getLogger('streamlit.runtime.scriptrunner.script_runner').setLevel(logging.ERROR)
+logging.getLogger('streamlit.runtime.scriptrunner.script_run_context').setLevel(logging.ERROR)
 
 # 기존 프로젝트의 공통 모듈 및 설정을 가져옵니다.
 import sys
@@ -118,7 +123,7 @@ def ui_ranking_list(rank_data, is_us=False, limit=50):
         st.divider()
 
 # ----------------------------------------------------------------------
-# [로직] 데이터 계산 (st.cache_data 제거 -> 직접 호출)
+# [로직] 데이터 계산
 # ----------------------------------------------------------------------
 def calculate_etf_data():
     etf_tickers = cfg.ETF_TICKERS
@@ -204,8 +209,16 @@ def calculate_stock_data():
 
 def calculate_us_data():
     try:
-        df_sp = fdr.StockListing('S&P500').head(200)
-        tickers = {row['Symbol']: row['Symbol'] for _, row in df_sp.iterrows()}
+        # [수정] S&P 500 전종목 + 나스닥 100 조합 (약 530~550개) - 우량주 누락 방지
+        df_sp = fdr.StockListing('S&P500')
+        sp500_tickers = set(df_sp['Symbol'].tolist())
+        
+        df_nasdaq = fdr.StockListing('NASDAQ')
+        nasdaq100_tickers = set(df_nasdaq.head(100)['Symbol'].tolist())
+        
+        combined_tickers = sp500_tickers.union(nasdaq100_tickers)
+        
+        tickers = {t: t for t in combined_tickers}
         tickers[cfg.US_DEFENSE_ASSET] = cfg.US_DEFENSE_ASSET
     except: return None
 
@@ -316,56 +329,75 @@ class UniversalRiskRewardCalculator:
         return pd.DataFrame(results), fig
 
 # ----------------------------------------------------------------------
-# [메인] 대시보드 구조 (영구 저장 로직 적용)
-# ----------------------------------------------------------------------
-# ----------------------------------------------------------------------
-# [메인] 대시보드 구조 (영구 저장 로직 + 테이블 포맷팅 수정)
+# [메인] 대시보드 구조 (개별 섹터 갱신 기능 적용)
 # ----------------------------------------------------------------------
 def main():
     st.set_page_config(layout="wide", page_title="모멘텀 봇 대시보드", page_icon="📈")
     
     st.title("📈 모멘텀 봇 대시보드")
     
-    # [1] 데이터 로드 로직 (디스크 -> 메모리)
+    # [1] 초기 데이터 로드 (파일 -> 메모리)
     if 'cached_data' not in st.session_state:
         loaded_data = load_data_from_disk()
         if loaded_data:
             st.session_state['cached_data'] = loaded_data
             last_update = loaded_data.get('last_update', '알 수 없음')
-            st.toast(f"📂 저장된 데이터를 불러왔습니다. (Update: {last_update})")
+            st.toast(f"📂 저장된 데이터를 불러왔습니다. (Last Save: {last_update})")
         else:
-            st.session_state['cached_data'] = None
+            # 파일이 없으면 빈 껍데기 생성
+            st.session_state['cached_data'] = {'etf': None, 'stock': None, 'us': None, 'last_update': '-'}
 
-    # [2] 상단 컨트롤 바
-    c_btn, c_info = st.columns([1, 4])
-    with c_btn:
-        update_btn = st.button("🔄 데이터 갱신 (서버 연결)", type="primary")
-    with c_info:
-        if st.session_state['cached_data']:
-            ts = st.session_state['cached_data'].get('last_update', '')
-            st.caption(f"Last Update: {ts}")
-        else:
-            st.warning("데이터가 없습니다. 갱신 버튼을 눌러주세요.")
+    # 현재 메모리에 있는 데이터 가져오기
+    current_data = st.session_state['cached_data']
 
-    # [3] 갱신 버튼 클릭 시 동작
-    if update_btn:
-        with st.spinner("서버에서 최신 데이터를 받아오는 중... (약 1~2분 소요)"):
-            etf_data = calculate_etf_data()
-            stock_data = calculate_stock_data()
-            us_data = calculate_us_data()
+    # [2] 상단 컨트롤 패널 (3분할 버튼)
+    st.write("##### 🔄 데이터 갱신 (섹터별 개별 실행)")
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    
+    with c1:
+        btn_etf = st.button("🇰🇷 ETF 갱신", use_container_width=True)
+    with c2:
+        btn_stock = st.button("🇰🇷 개별주 갱신", use_container_width=True)
+    with c3:
+        btn_us = st.button("🇺🇸 미국주식 갱신", use_container_width=True)
+    with c4:
+        # 마지막 업데이트 시간 표시
+        ts = current_data.get('last_update', '-')
+        st.info(f"🕒 마지막 저장: {ts}")
+
+    # [3] 갱신 로직 (선택된 섹터만 계산 후 합치기)
+    target_sector = None
+    
+    if btn_etf: target_sector = 'etf'
+    elif btn_stock: target_sector = 'stock'
+    elif btn_us: target_sector = 'us'
+
+    if target_sector:
+        with st.spinner(f"[{target_sector.upper()}] 데이터를 수집 및 분석 중입니다..."):
             
-            new_data = {
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'etf': etf_data,
-                'stock': stock_data,
-                'us': us_data
-            }
+            # 1. 해당 섹터만 새로 계산
+            if target_sector == 'etf':
+                new_part = calculate_etf_data()
+            elif target_sector == 'stock':
+                new_part = calculate_stock_data()
+            elif target_sector == 'us':
+                new_part = calculate_us_data()
             
-            if save_data_to_disk(new_data):
-                st.session_state['cached_data'] = new_data
-                st.success("데이터 갱신 및 저장 완료!")
-                time.sleep(1)
-                st.rerun()
+            # 2. 기존 데이터에 덮어쓰기 (Merge)
+            if new_part:
+                current_data[target_sector] = new_part
+                current_data['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 3. 파일 저장
+                if save_data_to_disk(current_data):
+                    st.session_state['cached_data'] = current_data
+                    st.success(f"✅ {target_sector.upper()} 데이터 갱신 완료!")
+                    time.sleep(1)
+                    st.rerun() # 화면 새로고침
+            else:
+                st.error("데이터 수집 실패. 잠시 후 다시 시도해주세요.")
+
+    st.divider()
 
     # --- 메인 레이아웃 (좌우 2단 분할) ---
     col_left, col_right = st.columns([1.1, 0.9])
@@ -373,14 +405,22 @@ def main():
     # [왼쪽] 모멘텀 신호 카드 스택
     with col_left:
         st.subheader("모멘텀 신호")
-        current_data = st.session_state.get('cached_data')
         
-        if current_data:
-            render_left_card("🇰🇷 한국 ETF", current_data.get('etf'), 'etf')
-            render_left_card("🇰🇷 한국 개별주", current_data.get('stock'), 'stock')
-            render_left_card("🇺🇸 미국 주식", current_data.get('us'), 'us')
+        # 데이터가 있으면 그리고, 없으면 안내 문구
+        if current_data.get('etf'):
+            render_left_card("🇰🇷 한국 ETF", current_data['etf'], 'etf')
         else:
-            st.info("👆 상단의 '데이터 갱신' 버튼을 눌러 데이터를 수집해주세요.")
+            st.warning("🇰🇷 ETF 데이터가 없습니다. 위의 [ETF 갱신] 버튼을 눌러주세요.")
+
+        if current_data.get('stock'):
+            render_left_card("🇰🇷 한국 개별주", current_data['stock'], 'stock')
+        else:
+            st.warning("🇰🇷 개별주 데이터가 없습니다. 위의 [개별주 갱신] 버튼을 눌러주세요.")
+
+        if current_data.get('us'):
+            render_left_card("🇺🇸 미국 주식", current_data['us'], 'us')
+        else:
+            st.warning("🇺🇸 미국 주식 데이터가 없습니다. 위의 [미국주식 갱신] 버튼을 눌러주세요.")
 
     # [오른쪽] 손익비 분석기 (항상 보임)
     with col_right:
@@ -409,18 +449,13 @@ def main():
                     res, fig = calc.analyze(ticker, entry_price)
                     
                     if res is not None:
-                        # [수정됨] 콤마(,)와 단위를 직접 문자열로 변환하여 적용
                         is_kr_stock = ticker.isdigit()
-                        
-                        # 표시용 데이터프레임 복사
                         df_disp = res.copy()
                         
                         if is_kr_stock:
-                            # 한국: 정수 + 콤마 + 원 (예: 10,000원)
                             df_disp["Target"] = df_disp["Target"].apply(lambda x: f"{int(x):,}원")
                             df_disp["Stop"] = df_disp["Stop"].apply(lambda x: f"{int(x):,}원")
                         else:
-                            # 미국: 소수점 + 콤마 + 달러 (예: $150.20)
                             df_disp["Target"] = df_disp["Target"].apply(lambda x: f"${x:,.2f}")
                             df_disp["Stop"] = df_disp["Stop"].apply(lambda x: f"${x:,.2f}")
 

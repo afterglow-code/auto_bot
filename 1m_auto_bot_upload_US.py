@@ -15,16 +15,26 @@ def get_todays_signal():
     print("📊 미국 주식 가중모멘텀 전략 (S&P500 Top 200)")
     print("="*70)
     
-    # 1. 대상 종목 리스트 구성
+# 1. 대상 종목 리스트 구성
     try:
-        print("⏳ 분석 대상 종목 수집 중... (S&P500 Top 200)")
-        df_sp500 = fdr.StockListing('S&P500')
-        top_200 = df_sp500.head(200)
+        print("⏳ 분석 대상 종목 수집 중... (S&P500 + NASDAQ Top 100)")
         
-        target_tickers = {row['Symbol']: row['Symbol'] for _, row in top_200.iterrows()}
+        # [수정] S&P 500 전종목 (약 500개)
+        df_sp500 = fdr.StockListing('S&P500')
+        sp500_tickers = set(df_sp500['Symbol'].tolist())
+        
+        # [수정] 나스닥 전체 중 상위 100개 (QQQ 스타일)
+        df_nasdaq = fdr.StockListing('NASDAQ')
+        nasdaq100_tickers = set(df_nasdaq.head(100)['Symbol'].tolist())
+        
+        # [수정] 합집합으로 중복 제거 (약 530~550개 예상)
+        combined_tickers = sp500_tickers.union(nasdaq100_tickers)
+        
+        # 딕셔너리 변환
+        target_tickers = {t: t for t in combined_tickers}
         target_tickers[cfg.US_DEFENSE_ASSET] = cfg.US_DEFENSE_ASSET # 방어 자산 추가
         
-        print(f"✅ 분석 대상: 총 {len(target_tickers)}개 종목 (S&P500 Top200 + {cfg.US_DEFENSE_ASSET})")
+        print(f"✅ 분석 대상: 총 {len(target_tickers)}개 종목 (S&P500 + NASDAQ100 + {cfg.US_DEFENSE_ASSET})")
 
     except Exception as e:
         error_msg = f"❌ [미국 주식 봇] 종목 리스트 확보 실패: {e}"
@@ -153,9 +163,10 @@ def create_message(is_bull_market, is_neutral_market, final_targets, reason, wei
     market_status_emoji = "🔴 상승장" if is_bull_market else "🟠 중립장" if is_neutral_market else "🔵 하락장"
 
     msg = f"🇺🇸 *[{today_dt.strftime('%Y-%m-%d')}] 미국 주식 봇*\n"
-    msg += f"전략: S&P500 가중모멘텀 (TOP {cfg.US_TOP_N})\n"
+    # [수정] 전략 명칭 변경
+    msg += f"전략: S&P500+NASDAQ100 모멘텀 (TOP {cfg.US_TOP_N})\n" 
     msg += f"시장: {market_status_emoji} ({cfg.US_MARKET_INDEX})\n"
-    msg += "---------------------------------\"n"
+    msg += "---------------------------------\n"
     
     target_list_msg = ""
     for name, weight in final_targets:
