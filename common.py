@@ -20,6 +20,7 @@ def fetch_data_in_parallel(tickers, start_date, end_date):
     def _fetch_one(name, code):
         try:
             df = fdr.DataReader(code, start=start_date, end=end_date)
+            time.sleep(0.2)  # API 과부하 방지용 딜레이
             if df.empty:
                 return None, f"{name}({code}) 데이터 없음"
             # 종가 시리즈 반환
