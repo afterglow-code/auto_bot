@@ -64,6 +64,99 @@ def load_data_from_disk():
     return None
 
 # ----------------------------------------------------------------------
+# [유틸리티] 차트 지표 계산
+# ----------------------------------------------------------------------
+def calculate_rsi(close_series, period=14):
+    delta = close_series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+    rs = avg_gain / (avg_loss + 1e-10)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_ichimoku(df):
+    high9 = df['High'].rolling(window=9).max()
+    low9 = df['Low'].rolling(window=9).min()
+    tenkan = (high9 + low9) / 2
+
+    high26 = df['High'].rolling(window=26).max()
+    low26 = df['Low'].rolling(window=26).min()
+    kijun = (high26 + low26) / 2
+
+    span_a = ((tenkan + kijun) / 2).shift(26)
+
+    high52 = df['High'].rolling(window=52).max()
+    low52 = df['Low'].rolling(window=52).min()
+    span_b = ((high52 + low52) / 2).shift(26)
+
+    chikou = df['Close'].shift(-26)
+
+    return tenkan, kijun, span_a, span_b, chikou
+
+def resample_ohlc(df, rule):
+    ohlc = df.resample(rule).agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    })
+    return ohlc.dropna()
+
+@st.cache_data(ttl=60 * 60)
+def load_price_data(ticker, start_date, end_date):
+    return fdr.DataReader(ticker, start=start_date, end=end_date)
+
+def plot_ichimoku_rsi(df, title, rr_data=None):
+    tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df)
+    rsi = calculate_rsi(df['Close'])
+
+    fig, axes = plt.subplots(2, 1, figsize=(9, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    ax_price, ax_rsi = axes
+
+    ax_price.plot(df.index, df['Close'], color='#222', lw=1.2, label='Close')
+    ax_price.plot(tenkan.index, tenkan, color='#e67e22', lw=1, label='Tenkan (9)')
+    ax_price.plot(kijun.index, kijun, color='#2980b9', lw=1, label='Kijun (26)')
+    ax_price.plot(span_a.index, span_a, color='#27ae60', lw=0.9, label='Span A')
+    ax_price.plot(span_b.index, span_b, color='#c0392b', lw=0.9, label='Span B')
+    ax_price.plot(chikou.index, chikou, color='#7f8c8d', lw=0.8, label='Chikou')
+
+    ax_price.fill_between(span_a.index, span_a, span_b, where=span_a >= span_b, color='#2ecc71', alpha=0.08)
+    ax_price.fill_between(span_a.index, span_a, span_b, where=span_a < span_b, color='#e74c3c', alpha=0.08)
+
+    # 손익비 라인 추가
+    if rr_data:
+        entry = rr_data.get('entry')
+        targets = rr_data.get('targets', [])
+        stops = rr_data.get('stops', [])
+        
+        if entry:
+            ax_price.axhline(entry, color='#2980b9', lw=2, ls='--', label='Entry', alpha=0.7)
+        
+        colors = ['#27ae60', '#f39c12', '#e74c3c']
+        styles = [':', '--', '-']
+        names = ['Scalp', 'Swing', 'Trend']
+        for i, (tp, sl) in enumerate(zip(targets, stops)):
+            ax_price.axhline(tp, color=colors[i], ls=styles[i], lw=1.5, alpha=0.6, label=f'{names[i]} TP')
+            ax_price.axhline(sl, color=colors[i], ls=styles[i], lw=1.5, alpha=0.6, label=f'{names[i]} SL')
+
+    ax_price.set_title(title, fontsize=10)
+    ax_price.legend(loc='upper left', fontsize=6, ncol=4)
+    ax_price.grid(True, alpha=0.3)
+
+    ax_rsi.plot(rsi.index, rsi, color='#8e44ad', lw=1)
+    ax_rsi.axhline(70, color='#c0392b', ls='--', lw=0.8)
+    ax_rsi.axhline(30, color='#27ae60', ls='--', lw=0.8)
+    ax_rsi.set_ylim(0, 100)
+    ax_rsi.set_ylabel('RSI', fontsize=8)
+    ax_rsi.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+# ----------------------------------------------------------------------
 # [유틸리티] UI 컴포넌트 & 상태 관리
 # ----------------------------------------------------------------------
 def set_analysis_target(ticker, price):
@@ -303,31 +396,23 @@ class UniversalRiskRewardCalculator:
             {"name": "Trend", "atr_period": 60, "risk_mult": 3.5, "reward_ratio": 3.0, "style": "-"}
         ]
         results = []
+        targets = []
+        stops = []
         for s in strategies:
             atr = self.calculate_atr(df, s['atr_period']).iloc[-1]
             risk = atr * s['risk_mult']
             stop, tp = entry_price - risk, entry_price + (risk * s['reward_ratio'])
             results.append({"Mode": s['name'], "Target": tp, "Stop": stop, "R/R": f"1:{s['reward_ratio']}", "Risk": f"-{(entry_price-stop)/entry_price*100:.1f}%"})
+            targets.append(tp)
+            stops.append(stop)
         
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(df.index, df['Close'], color='#333', lw=1.5, label='Price')
-        ax.axhline(entry_price, color='#2980b9', lw=2, label='Entry')
-        colors = ['#27ae60', '#e67e22', '#c0392b']
-        for i, s in enumerate(strategies):
-            ax.axhline(results[i]['Target'], color=colors[i], ls=s['style'], alpha=0.8)
-            ax.axhline(results[i]['Stop'], color=colors[i], ls=s['style'], alpha=0.8)
+        rr_data = {
+            'entry': entry_price,
+            'targets': targets,
+            'stops': stops
+        }
         
-        trend_tp, trend_sl = results[2]['Target'], results[2]['Stop']
-        ax.axhspan(entry_price, trend_tp, color='green', alpha=0.05)
-        ax.axhspan(trend_sl, entry_price, color='red', alpha=0.05)
-        
-        ax.set_title(f"[{ticker}] Risk/Reward", fontsize=10)
-        ax.tick_params(axis='x', labelsize=8)
-        ax.tick_params(axis='y', labelsize=8)
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        
-        return pd.DataFrame(results), fig
+        return pd.DataFrame(results), rr_data
 
 # ----------------------------------------------------------------------
 # [메인] 대시보드 구조 (개별 섹터 갱신 기능 적용)
@@ -423,11 +508,11 @@ def main():
         else:
             st.warning("🇺🇸 미국 주식 데이터가 없습니다. 위의 [미국주식 갱신] 버튼을 눌러주세요.")
 
-    # [오른쪽] 손익비 분석기 (항상 보임)
+    # [오른쪽] 통합 차트 분석 (손익비 + 일목균형표 + RSI)
     with col_right:
-        st.subheader("손익비 분석")
+        st.subheader("종목 분석")
         with st.container(border=True):
-            st.markdown("##### ⚖️ 만능 손익비 계산기 (KR/US)")
+            st.markdown("##### 📊 차트 분석 + ⚖️ 손익비")
             
             default_ticker = st.session_state.get('ticker_for_rr', '005930')
             default_price = st.session_state.get('price_for_rr', 0.0)
@@ -446,10 +531,11 @@ def main():
             
             if should_run and ticker:
                 try:
+                    # 손익비 계산
                     calc = UniversalRiskRewardCalculator()
-                    res, fig = calc.analyze(ticker, entry_price)
+                    res, rr_data = calc.analyze(ticker, entry_price)
                     
-                    if res is not None:
+                    if res is not None and rr_data is not None:
                         is_kr_stock = ticker.isdigit()
                         df_disp = res.copy()
                         
@@ -472,7 +558,36 @@ def main():
                                 "Risk": "예상손실"
                             }
                         )
-                        st.pyplot(fig)
+                        
+                        st.markdown("---")
+                        
+                        # 차트 분석 (손익비 라인 포함)
+                        end_date = datetime.now().strftime('%Y-%m-%d')
+                        start_date = (datetime.now() - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
+                        
+                        df_daily = load_price_data(ticker, start_date, end_date)
+                        if not df_daily.empty:
+                            tab_daily, tab_weekly, tab_monthly = st.tabs(["일차트", "주차트", "월차트"])
+
+                            with tab_daily:
+                                if len(df_daily) < 80:
+                                    st.warning("데이터가 부족하여 지표 정확도가 떨어질 수 있습니다.")
+                                fig = plot_ichimoku_rsi(df_daily, f"[{ticker}] 일차트 + 손익비", rr_data)
+                                st.pyplot(fig)
+
+                            with tab_weekly:
+                                df_weekly = resample_ohlc(df_daily, 'W-FRI')
+                                if len(df_weekly) < 80:
+                                    st.warning("데이터가 부족하여 지표 정확도가 떨어질 수 있습니다.")
+                                fig = plot_ichimoku_rsi(df_weekly, f"[{ticker}] 주차트 + 손익비", rr_data)
+                                st.pyplot(fig)
+
+                            with tab_monthly:
+                                df_monthly = resample_ohlc(df_daily, 'M')
+                                if len(df_monthly) < 80:
+                                    st.warning("데이터가 부족하여 지표 정확도가 떨어질 수 있습니다.")
+                                fig = plot_ichimoku_rsi(df_monthly, f"[{ticker}] 월차트 + 손익비", rr_data)
+                                st.pyplot(fig)
                     else:
                         st.error("데이터를 찾을 수 없습니다.")
                 except Exception as e:
