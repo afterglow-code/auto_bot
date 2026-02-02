@@ -5,3 +5,4 @@ requests
 openpyxl
 matplotlib
 streamlit
+altair
