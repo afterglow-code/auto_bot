@@ -4,9 +4,3 @@ finance-datareader
 requests
 openpyxl
 matplotlib
-time
-pickle
-os
-logging
-datetime
-streamlit
