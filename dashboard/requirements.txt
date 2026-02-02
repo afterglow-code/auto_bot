@@ -5,4 +5,4 @@ requests
 openpyxl
 matplotlib
 streamlit
-altair
+altair<5
