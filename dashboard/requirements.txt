@@ -4,3 +4,4 @@ finance-datareader
 requests
 openpyxl
 matplotlib
+streamlit
