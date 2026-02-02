@@ -60,6 +60,13 @@ st.markdown("""
         div[data-testid="stVerticalBlock"] > div {gap: 0.2rem;}
         .stButton button {height: 2em; padding-top: 0; padding-bottom: 0;}
         .element-container {margin-bottom: 0.2rem !important;}
+        
+        @media (max-width: 640px) {
+            .block-container {
+                padding-left: 0.2rem !important;
+                padding-right: 0.2rem !important;
+            }
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -200,6 +207,13 @@ def ui_target_row(rank, name, code, weight, price, is_us=False):
         css_styles="""
             [data-testid="stHorizontalBlock"] > div {
                 min-width: 0 !important;
+            }
+            @media (max-width: 640px) {
+                button {
+                    font-size: 0.8rem !important;
+                    padding: 0.2rem 0.3rem !important;
+                    height: 1.8rem !important;
+                }
             }
         """
     ):
