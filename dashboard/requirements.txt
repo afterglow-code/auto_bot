@@ -1,0 +1,13 @@
+yfinance
+pandas
+finance-datareader
+requests
+openpyxl
+matplotlib
+platform
+time
+pickle
+os
+logging
+datetime
+streamlit
