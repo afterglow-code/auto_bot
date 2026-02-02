@@ -6,3 +6,4 @@ openpyxl
 matplotlib
 streamlit
 altair<5
+imghdr
