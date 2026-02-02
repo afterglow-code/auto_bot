@@ -9,6 +9,9 @@ import pickle
 import os
 import logging
 
+# [중요] 페이지 설정을 최상단으로 이동 (반드시 다른 st.명령어보다 먼저 나와야 함)
+st.set_page_config(layout="wide", page_title="모멘텀 봇 대시보드", page_icon="📈")
+
 # [설정] 스레드 컨텍스트 경고 메시지 차단 (기능에는 영향 없음)
 logging.getLogger('streamlit.runtime.scriptrunner.script_runner').setLevel(logging.ERROR)
 logging.getLogger('streamlit.runtime.scriptrunner.script_run_context').setLevel(logging.ERROR)
@@ -31,6 +34,7 @@ else:
 plt.rcParams['axes.unicode_minus'] = False
 plt.style.use('ggplot')
 
+# 스타일 설정 (set_page_config 이후에 실행되어야 안전함)
 st.markdown("""
     <style>
         .block-container {padding-top: 1rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem;}
@@ -418,7 +422,7 @@ class UniversalRiskRewardCalculator:
 # [메인] 대시보드 구조 (개별 섹터 갱신 기능 적용)
 # ----------------------------------------------------------------------
 def main():
-    st.set_page_config(layout="wide", page_title="모멘텀 봇 대시보드", page_icon="📈")
+    # st.set_page_config는 여기서 제거하고 파일 최상단으로 이동했습니다.
     
     st.title("📈 모멘텀 봇 대시보드")
     
