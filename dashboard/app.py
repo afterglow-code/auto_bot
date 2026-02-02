@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import FinanceDataReader as fdr
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+from streamlit_extras.stylable_container import stylable_container
 import platform
 import time
 import pickle
@@ -194,34 +195,59 @@ def ui_card_header(title, status, reason):
     st.markdown("<hr style='margin: 0.3rem 0;'>", unsafe_allow_html=True)
 
 def ui_target_row(rank, name, code, weight, price, is_us=False):
-    c1, c2, c3, c4 = st.columns([2.5, 2, 1.2, 0.8])
-    with c1:
-        st.markdown(f"<div style='margin-bottom: -0.5rem;'>{rank}. {name}</div>", unsafe_allow_html=True)
-        if code and code != name: st.caption(f"{code}")
-    with c2:
-        st.progress(weight)
-        st.caption(f"{weight*100:.0f}%")
-    with c3:
-        if is_us: st.write(f"${price:,.2f}")
-        else: st.write(f"{int(price):,}원")
-    with c4:
-        if code and code != "N/A":
-            st.button("🔍", key=f"btn_{code}_{rank}_{int(time.time())}", 
-                     help="오른쪽 화면에서 분석", 
-                     on_click=set_analysis_target, args=(code, price))
+    with stylable_container(
+        key=f"target_{code}_{rank}",
+        css_styles="""
+            [data-testid="stHorizontalBlock"] > div {
+                min-width: 0 !important;
+            }
+        """
+    ):
+        c1, c2, c3, c4 = st.columns([2.5, 2, 1.2, 0.8])
+        with c1:
+            st.markdown(f"<div style='margin-bottom: -0.5rem;'>{rank}. {name}</div>", unsafe_allow_html=True)
+            if code and code != name: st.caption(f"{code}")
+        with c2:
+            st.progress(weight)
+            st.caption(f"{weight*100:.0f}%")
+        with c3:
+            if is_us: st.write(f"${price:,.2f}")
+            else: st.write(f"{int(price):,}원")
+        with c4:
+            if code and code != "N/A":
+                st.button("🔍", key=f"btn_{code}_{rank}_{int(time.time())}", 
+                         help="오른쪽 화면에서 분석", 
+                         on_click=set_analysis_target, args=(code, price))
 
 def ui_ranking_list(rank_data, is_us=False, limit=50):
-    c1, c2, c3, c4, c5 = st.columns([0.7, 2.5, 1.2, 1.5, 1.2])
-    c1.caption("No.")
-    c2.caption("종목명")
-    c3.caption("점수")
-    c4.caption("현재가")
-    c5.caption("분석")
+    # 고유 키 생성 (rank_data의 메모리 주소 사용)
+    unique_key = f"ranking_header_{id(rank_data)}"
+    with stylable_container(
+        key=unique_key,
+        css_styles="""
+            [data-testid="stHorizontalBlock"] > div {
+                min-width: 0 !important;
+            }
+        """
+    ):
+        c1, c2, c3, c4, c5 = st.columns([0.7, 2.0, 1.2, 1.5, 1.7])
+        c1.caption("No.")
+        c2.caption("종목명")
+        c3.caption("점수")
+        c4.caption("현재가")
+        c5.caption("분석")
     st.markdown("<hr style='margin: 0.1rem 0;'>", unsafe_allow_html=True)
 
     for item in rank_data[:limit]:
-        with st.container():
-            c1, c2, c3, c4, c5 = st.columns([0.7, 2.5, 1.2, 1.5, 1.2])
+        with stylable_container(
+            key=f"ranking_{item['code']}_{item['rank']}",
+            css_styles="""
+                [data-testid="stHorizontalBlock"] > div {
+                    min-width: 0 !important;
+                }
+            """
+        ):
+            c1, c2, c3, c4, c5 = st.columns([0.7, 2.0, 1.2, 1.5, 1.7])
             with c1: st.write(f"**{item['rank']}**")
             with c2: st.write(f"{item['name']}")
             with c3: 
