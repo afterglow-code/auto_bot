@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import FinanceDataReader as fdr
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import platform
 import time
 import pickle
@@ -27,11 +28,27 @@ import config as cfg
 # ----------------------------------------------------------------------
 DATA_FILE = "dashboard_data.pkl"  # 데이터를 저장할 파일명
 
-if platform.system() == 'Darwin': 
-    plt.rc('font', family='AppleGothic')
-else: 
-    plt.rc('font', family='Malgun Gothic')
-plt.rcParams['axes.unicode_minus'] = False
+# [수정됨] 폰트 설정 로직 (파일 우선 로드)
+def init_font():
+    font_filename = "NanumGothic.ttf" 
+    
+    # 현재 파일(app.py)과 같은 폴더에서 폰트 파일을 찾음
+    font_path = os.path.join(os.path.dirname(__file__), font_filename)
+    
+    if os.path.exists(font_path):
+        # 폰트 파일이 있으면 로드 (서버/배포 환경용)
+        font_prop = fm.FontProperties(fname=font_path)
+        plt.rc('font', family=font_prop.get_name())
+    else:
+        # 폰트 파일이 없으면 시스템 폰트 사용 (로컬 환경용)
+        if platform.system() == 'Darwin': 
+            plt.rc('font', family='AppleGothic')
+        else: 
+            plt.rc('font', family='Malgun Gothic')
+            
+    plt.rcParams['axes.unicode_minus'] = False
+
+init_font() # 폰트 설정 실행
 plt.style.use('ggplot')
 
 # 스타일 설정 (set_page_config 이후에 실행되어야 안전함)
@@ -598,6 +615,9 @@ def main():
                     st.error(f"오류: {e}")
             elif not ticker:
                 st.caption("왼쪽 리스트에서 돋보기(🔍)를 누르거나 코드를 입력하세요.")
+
+    st.divider()
+    st.caption("이 페이지에는 네이버에서 제공한 나눔 고딕 글꼴이 적용되어 있습니다.")
 
 if __name__ == "__main__":
     main()
