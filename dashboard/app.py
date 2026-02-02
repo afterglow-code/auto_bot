@@ -44,7 +44,7 @@ def init_font():
         if platform.system() == 'Darwin': 
             plt.rc('font', family='AppleGothic')
         else: 
-            plt.rc('font', family='Malgun Gothic')
+            plt.rc('font', family='NanumGothic')
             
     plt.rcParams['axes.unicode_minus'] = False
 
