@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -534,7 +534,9 @@ def main():
             # 2. 기존 데이터에 덮어쓰기 (Merge)
             if new_part:
                 current_data[target_sector] = new_part
-                current_data['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                # 한국 시간(UTC+9)으로 저장
+                kst = timezone(timedelta(hours=9))
+                current_data['last_update'] = datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')
                 
                 # 3. 파일 저장
                 if save_data_to_disk(current_data):
