@@ -4,6 +4,7 @@ import FinanceDataReader as fdr
 import pandas as pd
 import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import pytz
 
 # 리팩토링된 공통 모듈 및 설정 가져오기
 from common import send_telegram
@@ -113,7 +114,7 @@ def format_message(candidates):
     
     msg = f"{title_emoji} *[모멘텀 돌파 TOP {len(top_list)}]*\n"
     msg += f"전략: {strategy_name}\n"
-    msg += f"기준: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+    msg += f"기준: {datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M')}\n"
     msg += "-" * 25 + "\n"
     
     for i, stock in enumerate(top_list):
