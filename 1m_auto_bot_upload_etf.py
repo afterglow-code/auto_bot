@@ -4,6 +4,7 @@ import FinanceDataReader as fdr
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+import pytz
 import re
 
 # 리팩토링된 공통 모듈 및 설정 가져오기
@@ -136,11 +137,11 @@ def get_todays_signal():
 
 def create_message(is_bull_market, is_neutral_market, final_targets, all_rankings, reason, market_index, weighted_score, raw_data):
     """텔레그램 메시지를 생성하는 함수"""
-    today_dt = datetime.now()
+    today_dt = datetime.now(pytz.timezone('Asia/Seoul'))
     is_rebalance_period = (cfg.REBALANCE_PERIOD_START <= today_dt.day <= cfg.REBALANCE_PERIOD_END)
     
     # --- 기본 정보 ---
-    msg = f"<b>🇰🇷 한국 ETF 가중모멘텀 [{today_dt.strftime('%Y-%m-%d')}]</b>\n"
+    msg = f"<b>🇰🇷 한국 ETF 가중모멘텀 [{today_dt.strftime('%Y-%m-%d %H:%M')}]</b>\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
     
     current_market_index = market_index.iloc[-1]
