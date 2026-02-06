@@ -1,0 +1,9 @@
+streamlit
+pykrx
+FinanceDataReader
+pandas
+matplotlib
+plotly
+prophet
+numpy
+scipy
