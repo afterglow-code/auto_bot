@@ -29,3 +29,4 @@ Temporary Items
 __pycache__/
 *.pyc
 dashboard_data.pkl
+/lightning_logs/

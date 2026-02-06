@@ -421,6 +421,184 @@ def compute_prophet_forecast(df, periods=30):
     return plot_prophet_forecast(df, periods=periods, title="Prophet Forecast")
 
 
+def compute_neuralprophet_forecast(df, periods=30):
+    """NeuralProphet 모델을 사용하여 미래 가격을 예측합니다."""
+    try:
+        from neuralprophet import NeuralProphet
+        import torch
+    except ImportError:
+        raise ImportError("NeuralProphet이 설치되지 않았습니다. pip install neuralprophet 실행 필요")
+    
+    # 랜덤 시드 고정으로 일관된 결과 생성
+    np.random.seed(42)
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
+    
+    df_prophet = _prophet_df_from_price(df)
+    df_prophet = df_prophet[['ds', 'y', 'rsi', 'ma20', 'ma60']].copy()
+    df_prophet = df_prophet.sort_values('ds')
+    
+    if len(df_prophet) <= 30:
+        raise ValueError(f"학습 데이터 길이({len(df_prophet)})가 30일보다 짧아 예측할 수 없습니다.")
+    
+    # 단순하고 안정적인 1-step 예측 방식 사용
+    model = NeuralProphet(
+        n_lags=30,
+        n_forecasts=1,
+        yearly_seasonality=True,
+        weekly_seasonality=True,
+        daily_seasonality=False,
+        learning_rate=0.01,
+        epochs=200
+    )
+    
+    # RSI, MA20, MA60을 lagged regressor로 등록 (미래 값을 알 수 없으므로)
+    model.add_lagged_regressor('rsi')
+    model.add_lagged_regressor('ma20')
+    model.add_lagged_regressor('ma60')
+    
+    model.fit(df_prophet, freq='D')
+    
+    # 과거 fitted 값 먼저 구하기
+    historic_predictions = model.predict(df_prophet)
+    
+    # Iterative 방식으로 미래 예측 (한 단계씩 예측하고 결과를 다음 입력으로 사용)
+    current_df = df_prophet.copy()
+    future_predictions = []
+    
+    for i in range(periods):
+        # 1일 예측
+        future_1step = model.make_future_dataframe(current_df, periods=1, n_historic_predictions=0)
+        pred = model.predict(future_1step)
+        
+        # 예측 결과 저장
+        if not pred.empty:
+            last_pred = pred.iloc[-1]
+            future_predictions.append({
+                'ds': last_pred['ds'],
+                'yhat': last_pred.get('yhat1', last_pred.get('yhat', 0))
+            })
+            
+            # 예측 결과를 다음 입력 데이터에 추가 (autoregressive)
+            next_row = pd.DataFrame({
+                'ds': [last_pred['ds']],
+                'y': [last_pred.get('yhat1', last_pred.get('yhat', current_df['y'].iloc[-1]))],
+                'rsi': [current_df['rsi'].iloc[-1]],
+                'ma20': [current_df['ma20'].iloc[-1]],
+                'ma60': [current_df['ma60'].iloc[-1]]
+            })
+            current_df = pd.concat([current_df, next_row], ignore_index=True)
+    
+    # 과거 + 미래 결합
+    if 'yhat1' in historic_predictions.columns:
+        historic_predictions['yhat'] = historic_predictions['yhat1']
+    
+    future_df = pd.DataFrame(future_predictions)
+    forecast = pd.concat([historic_predictions[['ds', 'yhat']], future_df], ignore_index=True)
+    
+    # 신뢰구간 추가 (NeuralProphet은 기본 제공 안함, yhat의 ±5%로 설정)
+    if 'yhat' in forecast.columns:
+        forecast['yhat_lower'] = forecast['yhat'] * 0.95
+        forecast['yhat_upper'] = forecast['yhat'] * 1.05
+    
+    return forecast
+
+
+def compute_xgboost_forecast(df, periods=5):
+    """XGBoost 분류 모델을 사용하여 미래 상승/하락 확률을 예측합니다."""
+    try:
+        import xgboost as xgb
+    except ImportError:
+        raise ImportError("XGBoost가 설치되지 않았습니다. pip install xgboost 실행 필요")
+    
+    from sklearn.preprocessing import StandardScaler
+    
+    # 랜덤 시드 고정으로 일관된 결과 생성
+    np.random.seed(42)
+    
+    df_clean = df[['Close']].copy()
+    df_clean['MA5'] = df_clean['Close'].rolling(5).mean()
+    df_clean['MA20'] = df_clean['Close'].rolling(20).mean()
+    df_clean['MA60'] = df_clean['Close'].rolling(60).mean()
+    df_clean['RSI'] = calculate_rsi(df_clean['Close'])
+    df_clean = df_clean.dropna()
+    
+    if len(df_clean) < 100:
+        raise ValueError("XGBoost 예측을 위한 데이터가 부족합니다.")
+    
+    # 특징 생성: 이전 5일 가격 + 기술지표
+    X, y = [], []
+    lookback = 5
+    for i in range(lookback, len(df_clean) - 1):  # -1: 다음날 라벨을 위해
+        features = list(df_clean['Close'].iloc[i-lookback:i].values)
+        features.extend([
+            df_clean['MA5'].iloc[i],
+            df_clean['MA20'].iloc[i],
+            df_clean['MA60'].iloc[i],
+            df_clean['RSI'].iloc[i]
+        ])
+        X.append(features)
+        # 타겟: 다음날 상승(1) or 하락(0)
+        next_close = df_clean['Close'].iloc[i + 1]
+        current_close = df_clean['Close'].iloc[i]
+        y.append(1 if next_close > current_close else 0)
+    
+    X = np.array(X)
+    y = np.array(y)
+    
+    # 학습/검증 분리
+    split = int(len(X) * 0.8)
+    X_train, X_val = X[:split], X[split:]
+    y_train, y_val = y[:split], y[split:]
+    
+    # 스케일링
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_val_scaled = scaler.transform(X_val)
+    
+    # XGBoost 분류 모델 학습
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=5,
+        learning_rate=0.1,
+        random_state=42
+    )
+    model.fit(X_train_scaled, y_train)
+    
+    # 미래 상승 확률 예측 (iterative)
+    predictions = []  # 상승 확률 저장
+    last_sequence = list(df_clean['Close'].iloc[-lookback:].values)
+    last_ma5 = df_clean['MA5'].iloc[-1]
+    last_ma20 = df_clean['MA20'].iloc[-1]
+    last_ma60 = df_clean['MA60'].iloc[-1]
+    last_rsi = df_clean['RSI'].iloc[-1]
+    
+    for i in range(periods):
+        features = last_sequence[-lookback:] + [last_ma5, last_ma20, last_ma60, last_rsi]
+        features_scaled = scaler.transform([features])
+        # 상승 확률 (클래스 1의 확률)
+        prob_up = model.predict_proba(features_scaled)[0][1]
+        predictions.append(prob_up)
+        
+        # 다음 예측을 위해 가격 업데이트 (확률 기반 예측가)
+        current_price = last_sequence[-1]
+        # 상승 확률이 0.5 이상이면 1% 상승, 아니면 1% 하락 가정
+        next_price = current_price * (1.01 if prob_up > 0.5 else 0.99)
+        last_sequence.append(next_price)
+    
+    # 결과 반환 (확률 데이터)
+    last_date = df.index[-1]
+    future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+    
+    result = pd.DataFrame({
+        'ds': future_dates,
+        'probability': predictions  # 상승 확률
+    })
+    
+    return result
+
+
 def plot_support_resistance(df, order=20, title="Support/Resistance"):
     close = df['Close'].values
     local_max_idx = argrelextrema(close, np.greater, order=order)[0]
@@ -735,98 +913,102 @@ def normalize_holdings(raw_input, name_to_ticker):
 tabs = st.tabs(["보유종목", "모멘텀"])
 
 with tabs[0]:
-    st.subheader("보유종목")
-    st.markdown("<div class='card'><div class='section-title'>HTS 보유종목 관리</div><div class='muted'>보유종목을 추가/편집/저장하고, 한눈에 성과와 펀더멘탈을 확인하세요.</div></div>", unsafe_allow_html=True)
+    st.markdown("### 보유종목")
+    st.caption("보유종목을 추가/편집/저장하고, 한눈에 성과와 펀더멘탈을 확인합니다.")
 
     if "holdings" not in st.session_state:
         st.session_state["holdings"] = load_holdings_from_disk()
 
     name_to_ticker, ticker_to_name = get_ticker_name_map()
 
-    with st.expander("보유종목 추가", expanded=True):
-        c1, c2, c3, c4 = st.columns([2, 1, 1, 2])
-        with c1:
-            add_input = st.text_input("종목명 또는 티커", value="005930")
-        with c2:
-            add_qty = st.number_input("보유수량", min_value=0.0, value=0.0, step=1.0)
-        with c3:
-            add_avg = st.number_input("평균단가", min_value=0.0, value=0.0, step=100.0)
-        with c4:
-            add_memo = st.text_input("메모", value="")
+    # 좌우 2컬럼 배치: 보유종목 추가 | 보유종목 리스트
+    col_add, col_list = st.columns([1, 2])
+    
+    with col_add:
+        with st.expander("보유종목 추가", expanded=False):
+            r1c1, r1c2, r1c3 = st.columns([2, 1, 1])
+            with r1c1:
+                add_input = st.text_input("종목명/티커", value="005930")
+            with r1c2:
+                add_qty = st.number_input("수량", min_value=0.0, value=0.0, step=1.0)
+            with r1c3:
+                add_avg = st.number_input("평균단가", min_value=0.0, value=0.0, step=100.0)
 
-        add_col1, add_col2 = st.columns([1, 3])
-        with add_col1:
-            add_btn = st.button("추가")
+            r2c1, r2c2 = st.columns([3, 1])
+            with r2c1:
+                add_memo = st.text_input("메모", value="")
+            with r2c2:
+                add_btn = st.button("추가", use_container_width=True)
 
-        if add_btn:
-            resolved, unresolved = normalize_holdings(add_input, name_to_ticker)
-            if unresolved:
-                st.warning(f"인식하지 못한 항목: {', '.join(unresolved)}")
-            if not resolved:
-                st.info("추가할 종목이 없습니다.")
+            if add_btn:
+                resolved, unresolved = normalize_holdings(add_input, name_to_ticker)
+                if unresolved:
+                    st.warning(f"인식하지 못한 항목: {', '.join(unresolved)}")
+                if not resolved:
+                    st.info("추가할 종목이 없습니다.")
+                else:
+                    for t in resolved:
+                        row = {
+                            "티커": t,
+                            "종목명": ticker_to_name.get(t, t),
+                            "보유수량": float(add_qty),
+                            "평균단가": float(add_avg),
+                            "메모": add_memo,
+                            "삭제": False,
+                        }
+                        st.session_state["holdings"].append(row)
+                    st.success("추가 완료")
+    
+    with col_list:
+        st.markdown("**보유종목 리스트**")
+        holdings_df = pd.DataFrame(st.session_state["holdings"])
+        if holdings_df.empty:
+            holdings_df = pd.DataFrame(columns=["티커", "종목명", "보유수량", "평균단가", "메모", "삭제"])
+
+        edited_df = st.data_editor(
+            holdings_df,
+            use_container_width=True,
+            hide_index=True,
+            height=240,
+            column_config={
+                "티커": st.column_config.TextColumn("티커"),
+                "종목명": st.column_config.TextColumn("종목명"),
+                "보유수량": st.column_config.NumberColumn("보유수량", format="%,.0f"),
+                "평균단가": st.column_config.NumberColumn("평균단가", format="%,.0f"),
+                "메모": st.column_config.TextColumn("메모"),
+                "삭제": st.column_config.CheckboxColumn("삭제"),
+            },
+        )
+
+        c_save, c_delete, c_refresh = st.columns([1, 1, 1])
+        with c_save:
+            save_btn = st.button("저장")
+        with c_delete:
+            delete_btn = st.button("선택 삭제")
+        with c_refresh:
+            reload_btn = st.button("새로고침")
+
+        if save_btn:
+            rows = edited_df.to_dict(orient="records")
+            rows = [r for r in rows if str(r.get("티커", "")).strip()]
+            if save_holdings_to_disk(rows):
+                st.session_state["holdings"] = rows
+                st.success("저장 완료")
             else:
-                for t in resolved:
-                    row = {
-                        "티커": t,
-                        "종목명": ticker_to_name.get(t, t),
-                        "보유수량": float(add_qty),
-                        "평균단가": float(add_avg),
-                        "메모": add_memo,
-                        "삭제": False,
-                    }
-                    st.session_state["holdings"].append(row)
-                st.success("추가 완료")
+                st.error("저장 실패")
 
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-    st.subheader("보유종목 리스트")
-
-    holdings_df = pd.DataFrame(st.session_state["holdings"])
-    if holdings_df.empty:
-        holdings_df = pd.DataFrame(columns=["티커", "종목명", "보유수량", "평균단가", "메모", "삭제"])
-
-    edited_df = st.data_editor(
-        holdings_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "티커": st.column_config.TextColumn("티커"),
-            "종목명": st.column_config.TextColumn("종목명"),
-            "보유수량": st.column_config.NumberColumn("보유수량"),
-            "평균단가": st.column_config.NumberColumn("평균단가"),
-            "메모": st.column_config.TextColumn("메모"),
-            "삭제": st.column_config.CheckboxColumn("삭제"),
-        },
-    )
-
-    c_save, c_delete, c_refresh = st.columns([1, 1, 2])
-    with c_save:
-        save_btn = st.button("저장")
-    with c_delete:
-        delete_btn = st.button("선택 삭제")
-    with c_refresh:
-        reload_btn = st.button("디스크에서 다시 불러오기")
-
-    if save_btn:
-        rows = edited_df.to_dict(orient="records")
-        rows = [r for r in rows if str(r.get("티커", "")).strip()]
-        if save_holdings_to_disk(rows):
+        if delete_btn:
+            rows = edited_df.to_dict(orient="records")
+            rows = [r for r in rows if not r.get("삭제")]
             st.session_state["holdings"] = rows
-            st.success("저장 완료")
-        else:
-            st.error("저장 실패")
+            if save_holdings_to_disk(rows):
+                st.success("삭제 후 저장 완료")
+            else:
+                st.error("삭제 저장 실패")
 
-    if delete_btn:
-        rows = edited_df.to_dict(orient="records")
-        rows = [r for r in rows if not r.get("삭제")]
-        st.session_state["holdings"] = rows
-        if save_holdings_to_disk(rows):
-            st.success("삭제 후 저장 완료")
-        else:
-            st.error("삭제 저장 실패")
-
-    if reload_btn:
-        st.session_state["holdings"] = load_holdings_from_disk()
-        st.info("디스크에서 다시 불러왔습니다.")
+        if reload_btn:
+            st.session_state["holdings"] = load_holdings_from_disk()
+            st.info("디스크에서 다시 불러왔습니다.")
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
@@ -841,7 +1023,13 @@ with tabs[0]:
     with col4:
         history_rows = st.selectbox("히스토리 표시 개수", options=[12, 24, 60, "ALL"], index=3)
 
+    if "holdings_query" not in st.session_state:
+        st.session_state["holdings_query"] = False
+
     if run:
+        st.session_state["holdings_query"] = True
+
+    if st.session_state.get("holdings_query"):
         current_df = pd.DataFrame(st.session_state["holdings"])
         tickers = [t for t in current_df.get("티커", []).tolist() if isinstance(t, str) and t.strip()]
 
@@ -864,10 +1052,17 @@ with tabs[0]:
                     funda.insert(1, "티커", funda.index)
 
                     st.markdown(f"<span class='pill'>기준일 {date_str}</span>", unsafe_allow_html=True)
-                    st.dataframe(
-                        funda[["종목명", "티커", "EPS", "PER", "PBR", "BPS", "DIV", "DPS", "ROE(%)"]]
-                        .reset_index(drop=True)
-                    )
+                    summary_df = funda[["종목명", "티커", "EPS", "PER", "PBR", "BPS", "DIV", "DPS", "ROE(%)"]].reset_index(drop=True)
+                    summary_fmt = {
+                        "EPS": "{:,.2f}",
+                        "PER": "{:,.2f}",
+                        "PBR": "{:,.2f}",
+                        "BPS": "{:,.2f}",
+                        "DIV": "{:,.2f}",
+                        "DPS": "{:,.2f}",
+                        "ROE(%)": "{:,.2f}",
+                    }
+                    st.dataframe(summary_df.style.format(summary_fmt), use_container_width=True)
 
                     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
                     st.subheader("!벌어야 한다!")
@@ -910,11 +1105,17 @@ with tabs[0]:
                         tab_overview, tab_price, tab_funda, tab_foreign, tab_sr = st.tabs(["요약", "가격", "펀더멘탈", "외인", "지지/예측"])
 
                         with tab_overview:
-                            st.dataframe(
-                                funda.loc[[t]][["종목명", "티커", "EPS", "PER", "PBR", "BPS", "DIV", "DPS", "ROE(%)"]]
-                                .reset_index(drop=True),
-                                use_container_width=True,
-                            )
+                            overview_df = funda.loc[[t]][["종목명", "티커", "EPS", "PER", "PBR", "BPS", "DIV", "DPS", "ROE(%)"]].reset_index(drop=True)
+                            overview_fmt = {
+                                "EPS": "{:,.2f}",
+                                "PER": "{:,.2f}",
+                                "PBR": "{:,.2f}",
+                                "BPS": "{:,.2f}",
+                                "DIV": "{:,.2f}",
+                                "DPS": "{:,.2f}",
+                                "ROE(%)": "{:,.2f}",
+                            }
+                            st.dataframe(overview_df.style.format(overview_fmt), use_container_width=True)
 
                         with tab_price:
                             if price_df.empty or "Close" not in price_df.columns:
@@ -930,29 +1131,113 @@ with tabs[0]:
 
                                 st.markdown("**가격 히스토리**")
                                 price_view = price_df[["Close", "Volume"]] if "Volume" in price_df.columns else price_df[["Close"]]
-                                st.dataframe(slice_hist(price_view).reset_index(), use_container_width=True)
+                                price_hist = slice_hist(price_view).reset_index()
+                                price_fmt = {"Close": "{:,.2f}"}
+                                if "Volume" in price_hist.columns:
+                                    price_fmt["Volume"] = "{:,.0f}"
+                                st.dataframe(price_hist.style.format(price_fmt), use_container_width=True)
 
                         with tab_sr:
                             if price_df.empty or "Close" not in price_df.columns:
                                 st.caption("가격 데이터를 가져오지 못했습니다.")
                             else:
-                                order = st.slider("지지/저항 민감도", min_value=5, max_value=60, value=20, step=5, key=f"sr_order_{t}")
-                                fig_sr, sup, res = plot_support_resistance(price_df, order=order, title=f"{name} 지지/저항")
+                                applied_key = f"sr_order_applied_{t}"
+                                if applied_key not in st.session_state:
+                                    st.session_state[applied_key] = 20
+
+                                with st.form(key=f"sr_form_{t}"):
+                                    order_input = st.slider(
+                                        "지지/저항 민감도",
+                                        min_value=5,
+                                        max_value=60,
+                                        value=int(st.session_state[applied_key]),
+                                        step=5,
+                                        key=f"sr_order_input_{t}",
+                                    )
+                                    apply_order = st.form_submit_button("민감도 적용")
+
+                                if apply_order:
+                                    st.session_state[applied_key] = order_input
+
+                                # 지지/저항 차트
+                                fig_sr, sup, res = plot_support_resistance(
+                                    price_df,
+                                    order=int(st.session_state[applied_key]),
+                                    title=f"{name} 지지/저항",
+                                )
                                 s1, s2, s3 = st.columns(3)
                                 s1.metric("현재가", f"{float(price_df['Close'].iloc[-1]):,.0f}원")
                                 s2.metric("지지선", f"{float(sup):,.0f}원")
                                 s3.metric("저항선", f"{float(res):,.0f}원")
                                 st.plotly_chart(fig_sr, use_container_width=True)
+                                
+                                st.divider()
+                                st.markdown("**📈 AI 예측 모델 (30일)**")
 
-                                try:
-                                    with st.spinner("Prophet 예측 계산 중..."):
-                                        forecast = compute_prophet_forecast(price_df, periods=30)
-                                    fig_pf = build_forecast_chart(price_df, forecast, title=f"{name} Prophet 예측")
-                                    st.plotly_chart(fig_pf, use_container_width=True)
-                                    last = forecast.iloc[-1]
-                                    st.caption(f"예측가: {last['yhat']:.2f} / 하단: {last['yhat_lower']:.2f} / 상단: {last['yhat_upper']:.2f}")
-                                except Exception as e:
-                                    st.error(f"Prophet 예측 실패: {e}")
+                                ai_cache_key = f"ai_forecast_cache_{t}"
+                                ai_sig = (
+                                    len(price_df),
+                                    str(price_df.index.max()),
+                                    float(price_df['Close'].iloc[-1])
+                                )
+
+                                if (
+                                    ai_cache_key not in st.session_state
+                                    or st.session_state[ai_cache_key].get("sig") != ai_sig
+                                ):
+                                    try:
+                                        with st.spinner("AI 모델 계산 중..."):
+                                            forecast_prophet = compute_prophet_forecast(price_df, periods=30)
+                                            forecast_np = compute_neuralprophet_forecast(price_df, periods=5)
+                                            forecast_xgb = compute_xgboost_forecast(price_df, periods=5)
+                                        st.session_state[ai_cache_key] = {
+                                            "sig": ai_sig,
+                                            "prophet": forecast_prophet,
+                                            "neural": forecast_np,
+                                            "xgboost": forecast_xgb,
+                                        }
+                                    except Exception as e:
+                                        st.error(f"예측 실패: {e}")
+                                        st.session_state[ai_cache_key] = None
+
+                                if ai_cache_key in st.session_state and st.session_state[ai_cache_key]:
+                                    cached = st.session_state[ai_cache_key]
+
+                                    # 3개 모델을 2행으로 배치 (Prophet | NeuralProphet / XGBoost | 빈공간)
+                                    col1, col2 = st.columns(2)
+
+                                    with col1:
+                                        st.markdown("**Prophet**")
+                                        try:
+                                            fig_pf = build_forecast_chart(price_df, cached["prophet"], title=f"{name} Prophet")
+                                            st.plotly_chart(fig_pf, use_container_width=True)
+                                            last = cached["prophet"].iloc[-1]
+                                            st.caption(f"예측: {last['yhat']:.2f} / 하단: {last.get('yhat_lower', 0):.2f} / 상단: {last.get('yhat_upper', 0):.2f}")
+                                        except Exception as e:
+                                            st.error(f"예측 실패: {e}")
+
+                                    with col2:
+                                        st.markdown("**NeuralProphet**")
+                                        try:
+                                            fig_np = build_forecast_chart(price_df, cached["neural"], title=f"{name} NeuralProphet")
+                                            st.plotly_chart(fig_np, use_container_width=True)
+                                            last_np = cached["neural"].iloc[-1]
+                                            st.caption(f"예측: {last_np['yhat']:.2f}")
+                                        except Exception as e:
+                                            st.error(f"예측 실패: {e}")
+
+                                    col3, col4 = st.columns(2)
+
+                                    with col3:
+                                        st.markdown("**XGBoost (상승확률)**")
+                                        try:
+                                            for idx, row in cached["xgboost"].iterrows():
+                                                date_str = row['ds'].strftime('%m/%d')
+                                                prob = row['probability']
+                                                color = "green" if prob > 0.5 else "red"
+                                                st.markdown(f"{date_str}: <span style='color:{color};font-weight:bold'>{prob*100:.1f}%</span> 상승", unsafe_allow_html=True)
+                                        except Exception as e:
+                                            st.error(f"예측 실패: {e}")
 
                         with tab_funda:
                             funda_hist = load_fundamental_history(t, f_start_date, f_end_date)
@@ -998,11 +1283,17 @@ with tabs[0]:
                                             st.line_chart(chart_src[["DPS"]], use_container_width=True)
 
                                 st.markdown("**펀더멘탈 히스토리**")
-                                st.dataframe(
-                                    slice_hist(funda_hist[["EPS", "BPS", "PER", "PBR", "DIV", "DPS", "ROE(%)"]])
-                                    .reset_index(),
-                                    use_container_width=True,
-                                )
+                                funda_hist_view = slice_hist(funda_hist[["EPS", "BPS", "PER", "PBR", "DIV", "DPS", "ROE(%)"]]).reset_index()
+                                funda_hist_fmt = {
+                                    "EPS": "{:,.2f}",
+                                    "BPS": "{:,.2f}",
+                                    "PER": "{:,.2f}",
+                                    "PBR": "{:,.2f}",
+                                    "DIV": "{:,.2f}",
+                                    "DPS": "{:,.2f}",
+                                    "ROE(%)": "{:,.2f}",
+                                }
+                                st.dataframe(funda_hist_view.style.format(funda_hist_fmt), use_container_width=True)
 
                         with tab_foreign:
                             foreign_hist = load_foreign_history(t, f_start_date, f_end_date)
@@ -1012,28 +1303,23 @@ with tabs[0]:
                                 foreign_hist = foreign_hist.copy()
                                 latest = foreign_hist.iloc[-1]
 
-                                f1, f2, f3 = st.columns(3)
+                                f1, f2 = st.columns(2)
                                 if "지분율" in foreign_hist.columns:
                                     f1.metric("외인 지분율(%)", f"{latest.get('지분율', 0):.2f}")
                                 else:
                                     f1.metric("외인 지분율(%)", "-")
 
-                                if "한도소진율" in foreign_hist.columns:
-                                    f2.metric("한도소진율(%)", f"{latest.get('한도소진율', 0):.2f}")
-                                else:
-                                    f2.metric("한도소진율(%)", "-")
-
                                 if "보유수량" in foreign_hist.columns:
-                                    f3.metric("외인 보유수량", f"{latest.get('보유수량', 0):,.0f}")
+                                    f2.metric("외인 보유수량", f"{latest.get('보유수량', 0):,.0f}")
                                 else:
-                                    f3.metric("외인 보유수량", "-")
+                                    f2.metric("외인 보유수량", "-")
 
-                                left_cols = [c for c in ["지분율", "한도소진율"] if c in foreign_hist.columns]
+                                left_cols = [c for c in ["지분율"] if c in foreign_hist.columns]
                                 right_cols = [c for c in ["보유수량"] if c in foreign_hist.columns]
 
                                 c1, c2 = st.columns(2)
                                 with c1:
-                                    st.markdown("**지분율 / 한도소진율**")
+                                    st.markdown("**지분율**")
                                     if left_cols:
                                         st.line_chart(foreign_hist[left_cols], use_container_width=True)
                                     else:
@@ -1045,13 +1331,18 @@ with tabs[0]:
                                     else:
                                         st.caption("표시할 컬럼이 없습니다.")
 
-                                hist_cols = [c for c in ["지분율", "한도소진율", "보유수량", "상장주식수", "한도수량"] if c in foreign_hist.columns]
+                                hist_cols = [c for c in ["지분율", "보유수량", "상장주식수"] if c in foreign_hist.columns]
                                 if hist_cols:
                                     st.markdown("**외인 히스토리**")
-                                    st.dataframe(
-                                        slice_hist(foreign_hist[hist_cols]).reset_index(),
-                                        use_container_width=True,
-                                    )
+                                    foreign_view = slice_hist(foreign_hist[hist_cols]).reset_index()
+                                    foreign_fmt = {}
+                                    if "지분율" in foreign_view.columns:
+                                        foreign_fmt["지분율"] = "{:,.2f}"
+                                    if "보유수량" in foreign_view.columns:
+                                        foreign_fmt["보유수량"] = "{:,.0f}"
+                                    if "상장주식수" in foreign_view.columns:
+                                        foreign_fmt["상장주식수"] = "{:,.0f}"
+                                    st.dataframe(foreign_view.style.format(foreign_fmt), use_container_width=True)
 
                         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1203,7 +1494,15 @@ with tabs[1]:
                                     plot_dynamic_ichimoku_rsi(view, f"[{ticker}] 일차트", entry_price if entry_price else None, rr_data),
                                     use_container_width=True
                                 )
-                                st.dataframe(view[["Open", "High", "Low", "Close", "Volume"]].reset_index(), use_container_width=True)
+                                ohlc_view = view[["Open", "High", "Low", "Close", "Volume"]].reset_index()
+                                ohlc_fmt = {
+                                    "Open": "{:,.2f}",
+                                    "High": "{:,.2f}",
+                                    "Low": "{:,.2f}",
+                                    "Close": "{:,.2f}",
+                                    "Volume": "{:,.0f}",
+                                }
+                                st.dataframe(ohlc_view.style.format(ohlc_fmt), use_container_width=True)
                                 with st.expander("기술지표(일목/RSI)"):
                                     fig = plot_ichimoku_rsi(df_daily, f"[{ticker}] 일차트 + 손익비", rr_data)
                                     st.pyplot(fig)
@@ -1217,7 +1516,15 @@ with tabs[1]:
                                     plot_dynamic_ichimoku_rsi(view, f"[{ticker}] 주차트", entry_price if entry_price else None, rr_data),
                                     use_container_width=True
                                 )
-                                st.dataframe(view[["Open", "High", "Low", "Close", "Volume"]].reset_index(), use_container_width=True)
+                                ohlc_view = view[["Open", "High", "Low", "Close", "Volume"]].reset_index()
+                                ohlc_fmt = {
+                                    "Open": "{:,.2f}",
+                                    "High": "{:,.2f}",
+                                    "Low": "{:,.2f}",
+                                    "Close": "{:,.2f}",
+                                    "Volume": "{:,.0f}",
+                                }
+                                st.dataframe(ohlc_view.style.format(ohlc_fmt), use_container_width=True)
                                 with st.expander("기술지표(일목/RSI)"):
                                     fig = plot_ichimoku_rsi(df_weekly, f"[{ticker}] 주차트 + 손익비", rr_data)
                                     st.pyplot(fig)
@@ -1231,29 +1538,117 @@ with tabs[1]:
                                     plot_dynamic_ichimoku_rsi(view, f"[{ticker}] 월차트", entry_price if entry_price else None, rr_data),
                                     use_container_width=True
                                 )
-                                st.dataframe(view[["Open", "High", "Low", "Close", "Volume"]].reset_index(), use_container_width=True)
+                                ohlc_view = view[["Open", "High", "Low", "Close", "Volume"]].reset_index()
+                                ohlc_fmt = {
+                                    "Open": "{:,.2f}",
+                                    "High": "{:,.2f}",
+                                    "Low": "{:,.2f}",
+                                    "Close": "{:,.2f}",
+                                    "Volume": "{:,.0f}",
+                                }
+                                st.dataframe(ohlc_view.style.format(ohlc_fmt), use_container_width=True)
                                 with st.expander("기술지표(일목/RSI)"):
                                     fig = plot_ichimoku_rsi(df_monthly, f"[{ticker}] 월차트 + 손익비", rr_data)
                                     st.pyplot(fig)
 
                             with tab_sr:
-                                order = st.slider("지지/저항 민감도", min_value=5, max_value=60, value=20, step=5, key=f"sr_order_m_{ticker}")
-                                fig_sr, sup, res = plot_support_resistance(df_daily, order=order, title=f"[{ticker}] 지지/저항")
+                                applied_key = f"sr_order_applied_m_{ticker}"
+                                if applied_key not in st.session_state:
+                                    st.session_state[applied_key] = 20
+
+                                with st.form(key=f"sr_form_m_{ticker}"):
+                                    order_input = st.slider(
+                                        "지지/저항 민감도",
+                                        min_value=5,
+                                        max_value=60,
+                                        value=int(st.session_state[applied_key]),
+                                        step=5,
+                                        key=f"sr_order_input_m_{ticker}",
+                                    )
+                                    apply_order = st.form_submit_button("민감도 적용")
+
+                                if apply_order:
+                                    st.session_state[applied_key] = order_input
+
+                                # 지지/저항 차트
+                                fig_sr, sup, res = plot_support_resistance(
+                                    df_daily,
+                                    order=int(st.session_state[applied_key]),
+                                    title=f"[{ticker}] 지지/저항",
+                                )
                                 s1, s2, s3 = st.columns(3)
                                 s1.metric("현재가", f"{float(df_daily['Close'].iloc[-1]):,.2f}" if not ticker.isdigit() else f"{float(df_daily['Close'].iloc[-1]):,.0f}원")
                                 s2.metric("지지선", f"{float(sup):,.2f}" if not ticker.isdigit() else f"{float(sup):,.0f}원")
                                 s3.metric("저항선", f"{float(res):,.2f}" if not ticker.isdigit() else f"{float(res):,.0f}원")
                                 st.plotly_chart(fig_sr, use_container_width=True)
+                                
+                                st.divider()
+                                st.markdown("**📈 AI 예측 모델 (30일)**")
 
-                                try:
-                                    with st.spinner("Prophet 예측 계산 중..."):
-                                        forecast = compute_prophet_forecast(df_daily, periods=30)
-                                    fig_pf = build_forecast_chart(df_daily, forecast, title=f"[{ticker}] Prophet 예측")
-                                    st.plotly_chart(fig_pf, use_container_width=True)
-                                    last = forecast.iloc[-1]
-                                    st.caption(f"예측가: {last['yhat']:.2f} / 하단: {last['yhat_lower']:.2f} / 상단: {last['yhat_upper']:.2f}")
-                                except Exception as e:
-                                    st.error(f"Prophet 예측 실패: {e}")
+                                ai_cache_key = f"ai_forecast_cache_m_{ticker}"
+                                ai_sig = (
+                                    len(df_daily),
+                                    str(df_daily.index.max()),
+                                    float(df_daily['Close'].iloc[-1])
+                                )
+
+                                if (
+                                    ai_cache_key not in st.session_state
+                                    or st.session_state[ai_cache_key].get("sig") != ai_sig
+                                ):
+                                    try:
+                                        with st.spinner("AI 모델 계산 중..."):
+                                            forecast_prophet = compute_prophet_forecast(df_daily, periods=30)
+                                            forecast_np = compute_neuralprophet_forecast(df_daily, periods=5)
+                                            forecast_xgb = compute_xgboost_forecast(df_daily, periods=5)
+                                        st.session_state[ai_cache_key] = {
+                                            "sig": ai_sig,
+                                            "prophet": forecast_prophet,
+                                            "neural": forecast_np,
+                                            "xgboost": forecast_xgb,
+                                        }
+                                    except Exception as e:
+                                        st.error(f"예측 실패: {e}")
+                                        st.session_state[ai_cache_key] = None
+
+                                if ai_cache_key in st.session_state and st.session_state[ai_cache_key]:
+                                    cached = st.session_state[ai_cache_key]
+
+                                    # 3개 모델을 2행으로 배치 (Prophet | NeuralProphet / XGBoost | 빈공간)
+                                    col1, col2 = st.columns(2)
+
+                                    with col1:
+                                        st.markdown("**Prophet**")
+                                        try:
+                                            fig_pf = build_forecast_chart(df_daily, cached["prophet"], title=f"[{ticker}] Prophet")
+                                            st.plotly_chart(fig_pf, use_container_width=True)
+                                            last = cached["prophet"].iloc[-1]
+                                            st.caption(f"예측: {last['yhat']:.2f} / 하단: {last.get('yhat_lower', 0):.2f} / 상단: {last.get('yhat_upper', 0):.2f}")
+                                        except Exception as e:
+                                            st.error(f"예측 실패: {e}")
+
+                                    with col2:
+                                        st.markdown("**NeuralProphet**")
+                                        try:
+                                            fig_np = build_forecast_chart(df_daily, cached["neural"], title=f"[{ticker}] NeuralProphet")
+                                            st.plotly_chart(fig_np, use_container_width=True)
+                                            last_np = cached["neural"].iloc[-1]
+                                            st.caption(f"예측: {last_np['yhat']:.2f}")
+                                        except Exception as e:
+                                            st.error(f"예측 실패: {e}")
+
+                                    col3, col4 = st.columns(2)
+
+                                    with col3:
+                                        st.markdown("**XGBoost (상승확률)**")
+                                        try:
+                                            for idx, row in cached["xgboost"].iterrows():
+                                                date_str = row['ds'].strftime('%m/%d')
+                                                prob = row['probability']
+                                                color = "green" if prob > 0.5 else "red"
+                                                st.markdown(f"{date_str}: <span style='color:{color};font-weight:bold'>{prob*100:.1f}%</span> 상승", unsafe_allow_html=True)
+                                        except Exception as e:
+                                            st.error(f"예측 실패: {e}")
                     else:
                         st.error("데이터를 찾을 수 없습니다.")
                 except Exception as e:
