@@ -30,3 +30,4 @@ __pycache__/
 *.pyc
 dashboard_data.pkl
 /lightning_logs/
+momentum_dashboard.pkl
