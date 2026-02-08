@@ -27,24 +27,48 @@ st.caption("보유종목 관리 → 펀더멘탈/차트 확인")
 st.markdown(
     """
     <style>
+        :root {
+            --card-bg: #f7f6f3;
+            --card-border: #e6e2da;
+            --muted: #6b7280;
+            --pill-bg: rgba(13, 148, 136, 0.12);
+            --pill-text: #0f766e;
+            --metric-bg: #f2f4f7;
+            --metric-border: #e5e7eb;
+            --divider: #e5e7eb;
+            --grid: rgba(0,0,0,0.05);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --card-bg: #0f172a;
+                --card-border: rgba(255,255,255,0.08);
+                --muted: #9aa0a6;
+                --pill-bg: rgba(14, 165, 233, 0.18);
+                --pill-text: #7dd3fc;
+                --metric-bg: #111827;
+                --metric-border: rgba(255,255,255,0.08);
+                --divider: rgba(255,255,255,0.08);
+                --grid: rgba(255,255,255,0.08);
+            }
+        }
         .block-container {padding-top: 1.2rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem;}
         h1 {margin-bottom: 0.2rem;}
         h2, h3 {margin-top: 0.6rem;}
         .section-title {font-size: 1.1rem; font-weight: 700; margin: 0.6rem 0 0.4rem 0;}
         .card {
-            background: #f7f6f3;
-            border: 1px solid #e6e2da;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
             border-radius: 14px;
             padding: 0.9rem 1rem;
             margin-bottom: 0.6rem;
             box-shadow: 0 8px 20px rgba(30, 64, 175, 0.08);
         }
-        .muted {color: #6b7280; font-size: 0.85rem;}
-        .pill {display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; background: rgba(13, 148, 136, 0.12); color: #0f766e; font-size: 0.75rem;}
-        [data-testid="stMetric"] {background: #f2f4f7; border-radius: 12px; padding: 0.5rem 0.8rem; border: 1px solid #e5e7eb;}
-        [data-testid="stMetric"] label {color: #667085;}
+        .muted {color: var(--muted); font-size: 0.85rem;}
+        .pill {display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; background: var(--pill-bg); color: var(--pill-text); font-size: 0.75rem;}
+        [data-testid="stMetric"] {background: var(--metric-bg); border-radius: 12px; padding: 0.5rem 0.8rem; border: 1px solid var(--metric-border);}
+        [data-testid="stMetric"] label {color: var(--muted);}        
         [data-testid="stDataFrame"] {border-radius: 12px; overflow: hidden;}
-        .divider {margin: 0.8rem 0; border-bottom: 1px solid #e5e7eb;} 
+        .divider {margin: 0.8rem 0; border-bottom: 1px solid var(--divider);} 
         @media (max-width: 640px) {
             .block-container {padding-left: 0.8rem !important; padding-right: 0.8rem !important;}
         }
@@ -450,7 +474,7 @@ def compute_neuralprophet_forecast(df, periods=30):
         weekly_seasonality=True,
         daily_seasonality=False,
         learning_rate=0.01,
-        epochs=200
+        epochs=150
     )
     
     # RSI, MA20, MA60을 lagged regressor로 등록 (미래 값을 알 수 없으므로)
@@ -1143,7 +1167,7 @@ with tabs[0]:
                             else:
                                 applied_key = f"sr_order_applied_{t}"
                                 if applied_key not in st.session_state:
-                                    st.session_state[applied_key] = 20
+                                    st.session_state[applied_key] = 5
 
                                 with st.form(key=f"sr_form_{t}"):
                                     order_input = st.slider(
@@ -1554,7 +1578,7 @@ with tabs[1]:
                             with tab_sr:
                                 applied_key = f"sr_order_applied_m_{ticker}"
                                 if applied_key not in st.session_state:
-                                    st.session_state[applied_key] = 20
+                                    st.session_state[applied_key] = 5
 
                                 with st.form(key=f"sr_form_m_{ticker}"):
                                     order_input = st.slider(
