@@ -30,7 +30,18 @@ def get_ticker_name_map():
         tickers.extend(stock.get_market_ticker_list(market="KOSPI"))
         tickers.extend(stock.get_market_ticker_list(market="KOSDAQ"))
     except Exception:
-        return {}, {}
+        tickers = []
+
+    if not tickers:
+        try:
+            df_kospi = fdr.StockListing('KOSPI')
+            df_kosdaq = fdr.StockListing('KOSDAQ')
+            combined = pd.concat([df_kospi, df_kosdaq])
+            name_to_ticker = dict(zip(combined['Name'], combined['Code']))
+            ticker_to_name = dict(zip(combined['Code'], combined['Name']))
+            return name_to_ticker, ticker_to_name
+        except Exception:
+            return {}, {}
 
     name_to_ticker = {}
     ticker_to_name = {}
@@ -50,7 +61,8 @@ def get_latest_fundamental(max_lookback=10):
         date_str = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
         try:
             df = stock.get_market_fundamental(date_str, market="ALL")
-        except Exception:
+        except Exception as e:
+            logging.exception("fundamental fetch error: %s", date_str)
             df = pd.DataFrame()
         if df is not None and not df.empty:
             logging.info("fundamental loaded: %s rows=%s", date_str, len(df))
