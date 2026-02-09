@@ -31,3 +31,5 @@ __pycache__/
 dashboard_data.pkl
 /lightning_logs/
 momentum_dashboard.pkl
+momentum_dashboard.pkl
+holdings.json
