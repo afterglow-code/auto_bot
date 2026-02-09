@@ -44,7 +44,7 @@ def fetch_data_in_parallel(tickers, start_date, end_date):
 
             series, error_msg = future.result()
             if error_msg:
-                # print(f"\n⚠️  {error_msg}") # 실패 시 상세 로그 (필요시 활성화)
+                print(f"\n⚠️  {error_msg}") # 실패 시 상세 로그 (필요시 활성화)
                 continue
             
             if series is not None and not series.empty:
