@@ -6,6 +6,10 @@ pandas
 matplotlib
 plotly
 prophet
+neuralprophet
 numpy
 scipy
+xgboost
+scikit-learn
+torch
 streamlit-extras
