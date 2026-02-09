@@ -525,9 +525,10 @@ with tabs[0]:
                                             float(price_df['Close'].iloc[-1])
                                         )
 
+                                        cache_entry = st.session_state.get(ai_cache_key)
                                         if (
-                                            ai_cache_key not in st.session_state
-                                            or st.session_state[ai_cache_key].get("sig") != ai_sig
+                                            cache_entry is None
+                                            or cache_entry.get("sig") != ai_sig
                                         ):
                                             try:
                                                 with st.spinner("AI 모델 계산 중..."):
@@ -1218,9 +1219,10 @@ with tabs[2]:
                                     float(df_daily['Close'].iloc[-1])
                                 )
 
+                                cache_entry = st.session_state.get(ai_cache_key)
                                 if (
-                                    ai_cache_key not in st.session_state
-                                    or st.session_state[ai_cache_key].get("sig") != ai_sig
+                                    cache_entry is None
+                                    or cache_entry.get("sig") != ai_sig
                                 ):
                                     try:
                                         with st.spinner("AI 모델 계산 중..."):

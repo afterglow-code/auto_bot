@@ -98,7 +98,7 @@ def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None, plot_ca
                                      decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
                                      name='Candlestick'), row=1, col=1)
     else:
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#e2e8f0', width=2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=tenkan.index, y=tenkan, name='Tenkan', line=dict(color='#f59e0b', width=1)), row=1, col=1)
     fig.add_trace(go.Scatter(x=kijun.index, y=kijun, name='Kijun', line=dict(color='#3b82f6', width=1)), row=1, col=1)
     # Cloud (Span A/B)
@@ -152,7 +152,7 @@ def plot_cloud_bbands_rr(df, title, entry_price=None, rr_data=None, plot_candles
                                      decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
                                      name='Candlestick'))
     else:
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)))
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#e2e8f0', width=2)))
 
     # Ichimoku cloud only
     fig.add_trace(go.Scatter(x=span_a.index, y=span_a, name='Span A', line=dict(color='#10b981', width=1)))
