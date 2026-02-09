@@ -18,6 +18,7 @@ import numpy as np
 from scipy.signal import argrelextrema
 from prophet import Prophet
 from prophet.plot import plot_plotly
+from streamlit_extras.stylable_container import stylable_container
 
 st.set_page_config(page_title="로컬 대시보드", layout="wide", page_icon="📊")
 
@@ -77,13 +78,84 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+MOMENTUM_DATA_FILE = os.path.join(DATA_DIR, "momentum_dashboard.pkl")
+HOLDINGS_FILE = os.path.join(DATA_DIR, "holdings.json")
+
+def load_holdings_from_disk():
+    if os.path.exists(HOLDINGS_FILE):
+        try:
+            with open(HOLDINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    return []
+
+def save_holdings_to_disk(rows):
+    try:
+        with open(HOLDINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def save_momentum_data_to_disk(data):
+    try:
+        with open(MOMENTUM_DATA_FILE, "wb") as f:
+            pickle.dump(data, f)
+        return True
+    except Exception:
+        return False
+
+
+def load_momentum_data_from_disk():
+    if os.path.exists(MOMENTUM_DATA_FILE):
+        try:
+            with open(MOMENTUM_DATA_FILE, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            return None
+    return None
+
+def initialize_session_state():
+    if "holdings" not in st.session_state:
+        st.session_state["holdings"] = load_holdings_from_disk()
+
+    if "holdings_query" not in st.session_state:
+        st.session_state["holdings_query"] = False
+
+    if 'cached_data' not in st.session_state:
+        loaded_data = load_momentum_data_from_disk()
+        if loaded_data:
+            st.session_state['cached_data'] = loaded_data
+        else:
+            st.session_state['cached_data'] = {'etf': None, 'stock': None, 'us': None, 'last_update': '-'}
+
+    if 'ticker_for_rr' not in st.session_state:
+        st.session_state['ticker_for_rr'] = ""
+
+    if 'price_for_rr' not in st.session_state:
+        st.session_state['price_for_rr'] = 0.0
+
+    if 'use_candlestick' not in st.session_state:
+        st.session_state['use_candlestick'] = True
+
+    if 'show_rr_lines' not in st.session_state:
+        st.session_state['show_rr_lines'] = True
+
+initialize_session_state()
+
 # [설정] 스레드 컨텍스트 경고 메시지 차단 (기능에는 영향 없음)
 logging.getLogger('streamlit.runtime.scriptrunner.script_runner').setLevel(logging.ERROR)
 logging.getLogger('streamlit.runtime.scriptrunner.script_run_context').setLevel(logging.ERROR)
 
-DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-HOLDINGS_FILE = os.path.join(DATA_DIR, "holdings.json")
-MOMENTUM_DATA_FILE = os.path.join(DATA_DIR, "momentum_dashboard.pkl")
+
+
+CANDLE_UP_COLOR = '#26A69A' # Green for increasing candles
+CANDLE_DOWN_COLOR = '#EF5350' # Red for decreasing candles
 
 # 기존 프로젝트 모듈 경로 추가
 ROOT_DIR = os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
@@ -113,44 +185,7 @@ init_font()
 plt.style.use('ggplot')
 
 
-def load_holdings_from_disk():
-    if os.path.exists(HOLDINGS_FILE):
-        try:
-            with open(HOLDINGS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return data
-        except Exception:
-            pass
-    return []
 
-
-def save_holdings_to_disk(rows):
-    try:
-        with open(HOLDINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(rows, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception:
-        return False
-
-
-def save_momentum_data_to_disk(data):
-    try:
-        with open(MOMENTUM_DATA_FILE, "wb") as f:
-            pickle.dump(data, f)
-        return True
-    except Exception:
-        return False
-
-
-def load_momentum_data_from_disk():
-    if os.path.exists(MOMENTUM_DATA_FILE):
-        try:
-            with open(MOMENTUM_DATA_FILE, "rb") as f:
-                return pickle.load(f)
-        except Exception:
-            return None
-    return None
 
 @st.cache_data(ttl=60 * 60)
 def get_ticker_name_map():
@@ -251,7 +286,7 @@ def resample_ohlc(df, rule):
     return ohlc.dropna()
 
 
-def plot_ichimoku_rsi(df, title, rr_data=None):
+def plot_ichimoku_rsi(df, title, rr_data=None, show_rr=True):
     tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df)
     rsi = calculate_rsi(df['Close'])
 
@@ -268,7 +303,7 @@ def plot_ichimoku_rsi(df, title, rr_data=None):
     ax_price.fill_between(span_a.index, span_a, span_b, where=span_a >= span_b, color='#2ecc71', alpha=0.08)
     ax_price.fill_between(span_a.index, span_a, span_b, where=span_a < span_b, color='#e74c3c', alpha=0.08)
 
-    if rr_data:
+    if rr_data and show_rr:
         entry = rr_data.get('entry')
         targets = rr_data.get('targets', [])
         stops = rr_data.get('stops', [])
@@ -298,7 +333,7 @@ def plot_ichimoku_rsi(df, title, rr_data=None):
     return fig
 
 
-def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None):
+def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None, plot_candlestick=False, show_rr=True):
     tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df)
     rsi = calculate_rsi(df['Close'])
 
@@ -310,8 +345,17 @@ def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None):
         row_heights=[0.7, 0.3],
         subplot_titles=(title, "RSI")
     )
-
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)), row=1, col=1)
+    if plot_candlestick:
+        fig.add_trace(go.Candlestick(x=df.index,
+                                     open=df['Open'],
+                                     high=df['High'],
+                                     low=df['Low'],
+                                     close=df['Close'],
+                                     increasing=dict(line=dict(color=CANDLE_UP_COLOR, width=1), fillcolor=CANDLE_UP_COLOR),
+                                     decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
+                                     name='Candlestick'), row=1, col=1)
+    else:
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=tenkan.index, y=tenkan, name='Tenkan', line=dict(color='#f59e0b', width=1)), row=1, col=1)
     fig.add_trace(go.Scatter(x=kijun.index, y=kijun, name='Kijun', line=dict(color='#3b82f6', width=1)), row=1, col=1)
     # Cloud (Span A/B)
@@ -322,7 +366,7 @@ def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None):
     if entry_price:
         fig.add_hline(y=entry_price, line=dict(color='#0ea5e9', width=2, dash='dash'), row=1, col=1)
 
-    if rr_data:
+    if rr_data and show_rr:
         targets = rr_data.get('targets', [])
         stops = rr_data.get('stops', [])
         colors = ['#16a34a', '#f59e0b', '#ef4444']
@@ -335,23 +379,38 @@ def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None):
     fig.add_hline(y=70, line=dict(color='#ef4444', width=1, dash='dash'), row=2, col=1)
     fig.add_hline(y=30, line=dict(color='#10b981', width=1, dash='dash'), row=2, col=1)
 
-    fig.update_layout(height=520, showlegend=True, legend_orientation='h', legend_y=1.02, legend_x=0)
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.05)')
+    fig.update_layout(height=520, showlegend=True, legend_orientation='h', legend_y=1.02, legend_x=0,
+                      legend=dict(font=dict(color='#E0E0E0')),
+                      plot_bgcolor='#131722', # TradingView dark theme background
+                      paper_bgcolor='#131722', # TradingView dark theme paper background
+                      font=dict(color='#E0E0E0'), # Light text for dark theme
+                      xaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
+                      yaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39')
+                     )
 
     return fig
 
 
-def plot_cloud_bbands_rr(df, title, entry_price=None, rr_data=None):
+def plot_cloud_bbands_rr(df, title, entry_price=None, rr_data=None, plot_candlestick=False, show_rr=True):
     tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df)
-    close = df['Close']
-    ma20 = close.rolling(20).mean()
-    std20 = close.rolling(20).std()
+    ma20 = df['Close'].rolling(20).mean()
+    std20 = df['Close'].rolling(20).std()
     upper = ma20 + (std20 * 2)
     lower = ma20 - (std20 * 2)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=close, name='Close', line=dict(color='#1f2937', width=2)))
+
+    if plot_candlestick:
+        fig.add_trace(go.Candlestick(x=df.index,
+                                     open=df['Open'],
+                                     high=df['High'],
+                                     low=df['Low'],
+                                     close=df['Close'],
+                                     increasing=dict(line=dict(color=CANDLE_UP_COLOR, width=1), fillcolor=CANDLE_UP_COLOR),
+                                     decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
+                                     name='Candlestick'))
+    else:
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)))
 
     # Ichimoku cloud only
     fig.add_trace(go.Scatter(x=span_a.index, y=span_a, name='Span A', line=dict(color='#10b981', width=1)))
@@ -365,7 +424,7 @@ def plot_cloud_bbands_rr(df, title, entry_price=None, rr_data=None):
     if entry_price:
         fig.add_hline(y=entry_price, line=dict(color='#0ea5e9', width=2, dash='dash'))
 
-    if rr_data:
+    if rr_data and show_rr:
         targets = rr_data.get('targets', [])
         stops = rr_data.get('stops', [])
         colors = ['#16a34a', '#f59e0b', '#ef4444']
@@ -374,9 +433,14 @@ def plot_cloud_bbands_rr(df, title, entry_price=None, rr_data=None):
         for i, sl in enumerate(stops):
             fig.add_hline(y=sl, line=dict(color=colors[i % len(colors)], width=1, dash='dot'))
 
-    fig.update_layout(height=520, showlegend=True, legend_orientation='h', legend_y=1.02, legend_x=0, title=title)
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.05)')
+    fig.update_layout(height=520, showlegend=True, legend_orientation='h', legend_y=1.02, legend_x=0, title=title,
+                      legend=dict(font=dict(color='#E0E0E0')),
+                      plot_bgcolor='#131722', # TradingView dark theme background
+                      paper_bgcolor='#131722', # TradingView dark theme paper background
+                      font=dict(color='#E0E0E0'), # Light text for dark theme
+                      xaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
+                      yaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39')
+                     )
     return fig
 
 
@@ -661,51 +725,91 @@ def ui_card_header(title, status, reason):
 
 
 def ui_target_row(rank, name, code, weight, price, is_us=False):
-    c1, c2, c3, c4 = st.columns([2.5, 2, 1.2, 0.8])
-    with c1:
-        st.markdown(f"<div style='margin-bottom: -0.5rem;'>{rank}. {name}</div>", unsafe_allow_html=True)
-        if code and code != name: st.caption(f"{code}")
-    with c2:
-        st.progress(weight)
-        st.caption(f"{weight*100:.0f}%")
-    with c3:
-        if is_us: st.write(f"${price:,.2f}")
-        else: st.write(f"{int(price):,}원")
-    with c4:
-        if code and code != "N/A":
-            st.button("🔍", key=f"btn_{code}_{rank}_{int(time.time())}", on_click=set_analysis_target, args=(code, price))
+    with stylable_container(
+        key=f"target_{code}_{rank}",
+        css_styles="""
+            [data-testid="stHorizontalBlock"] > div {
+                min-width: 0 !important;
+            }
+            @media (max-width: 640px) {
+                button {
+                    font-size: 0.8rem !important;
+                    padding: 0.2rem 0.3rem !important;
+                    height: 1.8rem !important;
+                }
+            }
+        """
+    ):
+        c1, c2, c3, c4 = st.columns([2.5, 2, 1.2, 0.8])
+        with c1:
+            st.markdown(f"<div style='margin-bottom: -0.5rem;'>{rank}. {name}</div>", unsafe_allow_html=True)
+            if code and code != name: st.caption(f"{code}")
+        with c2:
+            st.progress(weight)
+            st.caption(f"{weight*100:.0f}%")
+        with c3:
+            if is_us: st.write(f"${price:,.2f}")
+            else: st.write(f"{int(price):,}원")
+        with c4:
+            if code and code != "N/A":
+                st.button("🔍", key=f"btn_{code}_{rank}_{int(time.time())}", on_click=set_analysis_target, args=(code, price))
 
 
 def ui_ranking_list(rank_data, is_us=False, limit=50):
-    c1, c2, c3, c4, c5 = st.columns([0.7, 2.0, 1.2, 1.5, 1.7])
-    c1.caption("No.")
-    c2.caption("종목명")
-    c3.caption("점수")
-    c4.caption("현재가")
-    c5.caption("분석")
+    unique_key = f"ranking_header_{id(rank_data)}"
+    with stylable_container(
+        key=unique_key,
+        css_styles="""
+            [data-testid="stHorizontalBlock"] > div {
+                min-width: 0 !important;
+            }
+        """
+    ):
+        c1, c2, c3, c4, c5 = st.columns([0.7, 2.0, 1.2, 1.5, 1.7])
+        c1.caption("No.")
+        c2.caption("종목명")
+        c3.caption("점수")
+        c4.caption("현재가")
+        c5.caption("분석")
     st.markdown("<hr style='margin: 0.1rem 0;'>", unsafe_allow_html=True)
 
     for item in rank_data[:limit]:
-        c1, c2, c3, c4, c5 = st.columns([0.7, 2.0, 1.2, 1.5, 1.7])
-        with c1: st.write(f"**{item['rank']}**")
-        with c2: st.write(f"{item['name']}")
-        with c3:
-            color = "red" if item['score'] > 0 else "blue"
-            st.markdown(f":{color}[{item['score']:.2f}]")
-        with c4:
-            if is_us: st.write(f"${item['price']:,.2f}")
-            else: st.write(f"{int(item['price']):,}원")
-        with c5:
-            code_label = item['code'] if item['code'] and item['code'] != "N/A" else "N/A"
-            if code_label != "N/A":
-                st.button(f"{code_label}", key=f"rk_btn_{item['code']}_{item['rank']}_{int(time.time())}", on_click=set_analysis_target, args=(item['code'], item['price']), use_container_width=True)
-            else: st.caption("-")
+        with stylable_container(
+            key=f"ranking_{item['code']}_{item['rank']}",
+            css_styles="""
+                [data-testid="stHorizontalBlock"] > div {
+                    min-width: 0 !important;
+                }
+            """
+        ):
+            c1, c2, c3, c4, c5 = st.columns([0.7, 2.0, 1.2, 1.5, 1.7])
+            with c1: st.write(f"**{item['rank']}**")
+            with c2: st.write(f"{item['name']}")
+            with c3:
+                color = "red" if item['score'] > 0 else "blue"
+                st.markdown(f":{color}[{item['score']:.2f}]")
+            with c4:
+                if is_us: st.write(f"${item['price']:,.2f}")
+                else: st.write(f"{int(item['price']):,}원")
+            with c5:
+                code_label = item['code'] if item['code'] and item['code'] != "N/A" else "N/A"
+                if code_label != "N/A":
+                    st.button(f"{code_label}", key=f"rk_btn_{item['code']}_{item['rank']}_{int(time.time())}", on_click=set_analysis_target, args=(item['code'], item['price']), use_container_width=True)
+                else: st.caption("-")
         st.markdown("<hr style='margin: 0.1rem 0; opacity: 0.3;'>", unsafe_allow_html=True)
 
 
 def set_analysis_target(ticker, price):
     st.session_state['ticker_for_rr'] = ticker
     st.session_state['price_for_rr'] = float(price)
+
+
+def sync_show_rr_lines(src_key):
+    st.session_state['show_rr_lines'] = st.session_state.get(src_key, True)
+
+
+def sync_use_candlestick(src_key):
+    st.session_state['use_candlestick'] = st.session_state.get(src_key, True)
 
 
 def calculate_etf_data():
@@ -940,9 +1044,6 @@ with tabs[0]:
     st.markdown("### 보유종목")
     st.caption("보유종목을 추가/편집/저장하고, 한눈에 성과와 펀더멘탈을 확인합니다.")
 
-    if "holdings" not in st.session_state:
-        st.session_state["holdings"] = load_holdings_from_disk()
-
     name_to_ticker, ticker_to_name = get_ticker_name_map()
 
     # 좌우 2컬럼 배치: 보유종목 추가 | 보유종목 리스트
@@ -1047,9 +1148,6 @@ with tabs[0]:
     with col4:
         history_rows = st.selectbox("히스토리 표시 개수", options=[12, 24, 60, "ALL"], index=3)
 
-    if "holdings_query" not in st.session_state:
-        st.session_state["holdings_query"] = False
-
     if run:
         st.session_state["holdings_query"] = True
 
@@ -1145,11 +1243,34 @@ with tabs[0]:
                             if price_df.empty or "Close" not in price_df.columns:
                                 st.caption("가격 데이터를 가져오지 못했습니다.")
                             else:
+                                candle_key = f"use_candlestick_holdings_{t}"
+                                st.checkbox(
+                                    "봉차트 표시",
+                                    value=st.session_state['use_candlestick'],
+                                    key=candle_key,
+                                    on_change=sync_use_candlestick,
+                                    args=(candle_key,),
+                                )
+                                rr_key = f"show_rr_lines_holdings_{t}"
+                                st.checkbox(
+                                    "손익비 라인 표시",
+                                    value=st.session_state['show_rr_lines'],
+                                    key=rr_key,
+                                    on_change=sync_show_rr_lines,
+                                    args=(rr_key,),
+                                )
                                 entry_for_rr = avg if avg > 0 else float(price_df["Close"].iloc[-1])
                                 rr_table, rr_data = UniversalRiskRewardCalculator().analyze(t, entry_for_rr)
                                 view = price_df.copy()
                                 st.plotly_chart(
-                                    plot_cloud_bbands_rr(view, f"{name} 가격", entry_for_rr, rr_data),
+                                    plot_cloud_bbands_rr(
+                                        view,
+                                        f"{name} 가격",
+                                        entry_for_rr,
+                                        rr_data,
+                                        plot_candlestick=st.session_state['use_candlestick'],
+                                        show_rr=st.session_state['show_rr_lines'],
+                                    ),
                                     use_container_width=True
                                 )
 
@@ -1373,13 +1494,6 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("모멘텀 대시보드")
 
-    if 'cached_data' not in st.session_state:
-        loaded_data = load_momentum_data_from_disk()
-        if loaded_data:
-            st.session_state['cached_data'] = loaded_data
-        else:
-            st.session_state['cached_data'] = {'etf': None, 'stock': None, 'us': None, 'last_update': '-'}
-
     current_data = st.session_state['cached_data']
 
     st.write("##### 🔄 데이터 갱신 (섹터별 개별 실행)")
@@ -1459,6 +1573,20 @@ with tabs[1]:
             entry_price = c2.number_input("매수단가 (0=현재가)", value=default_price)
 
             history_rows_m = st.selectbox("차트 데이터 표시 개수", options=[60, 120, 240, 500, "ALL"], index=1, key="momentum_history_rows")
+            st.checkbox(
+                "봉차트 표시",
+                value=st.session_state['use_candlestick'],
+                key="use_candlestick_momentum",
+                on_change=sync_use_candlestick,
+                args=("use_candlestick_momentum",),
+            )
+            st.checkbox(
+                "손익비 라인 표시",
+                value=st.session_state['show_rr_lines'],
+                key="show_rr_lines_momentum",
+                on_change=sync_show_rr_lines,
+                args=("show_rr_lines_momentum",),
+            )
 
             run_btn = st.button("분석 실행", use_container_width=True)
 
@@ -1515,7 +1643,14 @@ with tabs[1]:
                                     st.warning("데이터가 부족하여 지표 정확도가 떨어질 수 있습니다.")
                                 view = slice_hist_m(df_daily)
                                 st.plotly_chart(
-                                    plot_dynamic_ichimoku_rsi(view, f"[{ticker}] 일차트", entry_price if entry_price else None, rr_data),
+                                    plot_dynamic_ichimoku_rsi(
+                                        view,
+                                        f"[{ticker}] 일차트",
+                                        entry_price if entry_price else None,
+                                        rr_data,
+                                        plot_candlestick=st.session_state['use_candlestick'],
+                                        show_rr=st.session_state['show_rr_lines'],
+                                    ),
                                     use_container_width=True
                                 )
                                 ohlc_view = view[["Open", "High", "Low", "Close", "Volume"]].reset_index()
@@ -1528,7 +1663,7 @@ with tabs[1]:
                                 }
                                 st.dataframe(ohlc_view.style.format(ohlc_fmt), use_container_width=True)
                                 with st.expander("기술지표(일목/RSI)"):
-                                    fig = plot_ichimoku_rsi(df_daily, f"[{ticker}] 일차트 + 손익비", rr_data)
+                                    fig = plot_ichimoku_rsi(df_daily, f"[{ticker}] 일차트 + 손익비", rr_data, show_rr=st.session_state['show_rr_lines'])
                                     st.pyplot(fig)
 
                             with tab_weekly:
@@ -1537,7 +1672,14 @@ with tabs[1]:
                                     st.warning("데이터가 부족하여 지표 정확도가 떨어질 수 있습니다.")
                                 view = slice_hist_m(df_weekly)
                                 st.plotly_chart(
-                                    plot_dynamic_ichimoku_rsi(view, f"[{ticker}] 주차트", entry_price if entry_price else None, rr_data),
+                                    plot_dynamic_ichimoku_rsi(
+                                        view,
+                                        f"[{ticker}] 주차트",
+                                        entry_price if entry_price else None,
+                                        rr_data,
+                                        plot_candlestick=st.session_state['use_candlestick'],
+                                        show_rr=st.session_state['show_rr_lines'],
+                                    ),
                                     use_container_width=True
                                 )
                                 ohlc_view = view[["Open", "High", "Low", "Close", "Volume"]].reset_index()
@@ -1550,7 +1692,7 @@ with tabs[1]:
                                 }
                                 st.dataframe(ohlc_view.style.format(ohlc_fmt), use_container_width=True)
                                 with st.expander("기술지표(일목/RSI)"):
-                                    fig = plot_ichimoku_rsi(df_weekly, f"[{ticker}] 주차트 + 손익비", rr_data)
+                                    fig = plot_ichimoku_rsi(df_weekly, f"[{ticker}] 주차트 + 손익비", rr_data, show_rr=st.session_state['show_rr_lines'])
                                     st.pyplot(fig)
 
                             with tab_monthly:
@@ -1559,7 +1701,14 @@ with tabs[1]:
                                     st.warning("데이터가 부족하여 지표 정확도가 떨어질 수 있습니다.")
                                 view = slice_hist_m(df_monthly)
                                 st.plotly_chart(
-                                    plot_dynamic_ichimoku_rsi(view, f"[{ticker}] 월차트", entry_price if entry_price else None, rr_data),
+                                    plot_dynamic_ichimoku_rsi(
+                                        view,
+                                        f"[{ticker}] 월차트",
+                                        entry_price if entry_price else None,
+                                        rr_data,
+                                        plot_candlestick=st.session_state['use_candlestick'],
+                                        show_rr=st.session_state['show_rr_lines'],
+                                    ),
                                     use_container_width=True
                                 )
                                 ohlc_view = view[["Open", "High", "Low", "Close", "Volume"]].reset_index()
@@ -1572,7 +1721,7 @@ with tabs[1]:
                                 }
                                 st.dataframe(ohlc_view.style.format(ohlc_fmt), use_container_width=True)
                                 with st.expander("기술지표(일목/RSI)"):
-                                    fig = plot_ichimoku_rsi(df_monthly, f"[{ticker}] 월차트 + 손익비", rr_data)
+                                    fig = plot_ichimoku_rsi(df_monthly, f"[{ticker}] 월차트 + 손익비", rr_data, show_rr=st.session_state['show_rr_lines'])
                                     st.pyplot(fig)
 
                             with tab_sr:
