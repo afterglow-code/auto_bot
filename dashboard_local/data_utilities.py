@@ -61,9 +61,22 @@ def get_latest_fundamental(max_lookback=10):
         date_str = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
         try:
             df = stock.get_market_fundamental(date_str, market="ALL")
-        except Exception as e:
+        except Exception:
             logging.exception("fundamental fetch error: %s", date_str)
             df = pd.DataFrame()
+
+        if df is not None and not df.empty:
+            required_cols = {"BPS", "PER", "PBR", "EPS", "DIV", "DPS"}
+            if not required_cols.issubset(set(df.columns)):
+                df = pd.DataFrame()
+
+        if df is None or df.empty:
+            try:
+                df_kospi = stock.get_market_fundamental(date_str, market="KOSPI")
+                df_kosdaq = stock.get_market_fundamental(date_str, market="KOSDAQ")
+                df = pd.concat([df_kospi, df_kosdaq], axis=0)
+            except Exception:
+                df = pd.DataFrame()
         if df is not None and not df.empty:
             logging.info("fundamental loaded: %s rows=%s", date_str, len(df))
             return date_str, df
