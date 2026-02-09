@@ -8,6 +8,7 @@ from pykrx import stock
 import os
 import sys
 import numpy as np
+import logging
 
 from technical_indicators import UniversalRiskRewardCalculator
 from chart_plotting import (
@@ -52,7 +53,9 @@ def get_latest_fundamental(max_lookback=10):
         except Exception:
             df = pd.DataFrame()
         if df is not None and not df.empty:
+            logging.info("fundamental loaded: %s rows=%s", date_str, len(df))
             return date_str, df
+        logging.warning("fundamental empty: %s", date_str)
     return None, pd.DataFrame()
 
 @st.cache_data(ttl=60 * 60)
