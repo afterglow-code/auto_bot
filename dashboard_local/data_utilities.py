@@ -118,7 +118,8 @@ def calculate_etf_data():
         market_index = market_df['Close'].ffill()
         raw_data = fetch_data_in_parallel(etf_tickers, start_date, end_date)
         if raw_data.empty: return None
-    except Exception:
+    except Exception as e:
+        print(f"Error in calculate_etf_data: {e}")
         return None
 
     w1, w2, w3 = cfg.MOMENTUM_WEIGHTS
@@ -165,7 +166,8 @@ def calculate_stock_data():
         raw_data = fetch_data_in_parallel(tickers, start_date, end_date)
         valid_cols = [c for c in raw_data.columns if raw_data[c].count() >= 120]
         raw_data = raw_data[valid_cols]
-    except Exception:
+    except Exception as e:
+        print(f"Error in calculate_stock_data: {e}")
         return None
 
     daily_rets = raw_data.pct_change()
