@@ -62,21 +62,7 @@ def get_latest_fundamental(max_lookback=10):
         try:
             df = stock.get_market_fundamental(date_str, market="ALL")
         except Exception:
-            logging.exception("fundamental fetch error: %s", date_str)
             df = pd.DataFrame()
-
-        if df is not None and not df.empty:
-            required_cols = {"BPS", "PER", "PBR", "EPS", "DIV", "DPS"}
-            if not required_cols.issubset(set(df.columns)):
-                df = pd.DataFrame()
-
-        if df is None or df.empty:
-            try:
-                df_kospi = stock.get_market_fundamental(date_str, market="KOSPI")
-                df_kosdaq = stock.get_market_fundamental(date_str, market="KOSDAQ")
-                df = pd.concat([df_kospi, df_kosdaq], axis=0)
-            except Exception:
-                df = pd.DataFrame()
         if df is not None and not df.empty:
             logging.info("fundamental loaded: %s rows=%s", date_str, len(df))
             return date_str, df
@@ -278,47 +264,4 @@ def normalize_holdings(raw_input, name_to_ticker):
         else:
             unresolved.append(item)
 
-            today = datetime.now().strftime("%Y%m%d")
-            dates_to_try = []
-
-            try:
-                if hasattr(stock, "get_previous_business_days"):
-                    dates_to_try = stock.get_previous_business_days(
-                        fromdate=(datetime.now() - timedelta(days=max_lookback)).strftime("%Y%m%d"),
-                        todate=today,
-                    )[::-1]
-            except Exception:
-                dates_to_try = []
-
-            if not dates_to_try:
-                dates_to_try = [
-                    (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
-                    for i in range(max_lookback)
-                ]
-
-            required_cols = {"BPS", "PER", "PBR", "EPS", "DIV", "DPS"}
-
-            for date_str in dates_to_try:
-                df = pd.DataFrame()
-                try:
-                    df = stock.get_market_fundamental(date_str, market="ALL")
-                except Exception:
-                    logging.exception("fundamental fetch error: %s", date_str)
-
-                if df is not None and not df.empty and not required_cols.issubset(set(df.columns)):
-                    df = pd.DataFrame()
-
-                if df is None or df.empty:
-                    try:
-                        df_kospi = stock.get_market_fundamental(date_str, market="KOSPI")
-                        df_kosdaq = stock.get_market_fundamental(date_str, market="KOSDAQ")
-                        df = pd.concat([df_kospi, df_kosdaq], axis=0)
-                    except Exception:
-                        df = pd.DataFrame()
-
-                if df is not None and not df.empty:
-                    logging.info("fundamental loaded: %s rows=%s", date_str, len(df))
-                    return date_str, df
-
-            logging.warning("fundamental empty: %s~%s", dates_to_try[-1], dates_to_try[0])
-            return None, pd.DataFrame()
+    return list(dict.fromkeys(resolved)), unresolved
