@@ -80,14 +80,16 @@ def load_price_data(ticker, start_date, end_date):
 def load_fundamental_history(ticker, start_date, end_date):
     try:
         return stock.get_market_fundamental(start_date, end_date, ticker)
-    except Exception:
+    except Exception as e:
+        st.warning(f"펀더멘탈 호출 오류: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60 * 60)
 def load_foreign_history(ticker, start_date, end_date):
     try:
         return stock.get_exhaustion_rates_of_foreign_investment(start_date, end_date, ticker)
-    except Exception:
+    except Exception as e:
+        st.warning(f"외인 보유 호출 오류: {e}")
         return pd.DataFrame()
 
 
