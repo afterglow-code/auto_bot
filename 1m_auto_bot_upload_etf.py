@@ -206,3 +206,4 @@ def create_message(is_bull_market, is_neutral_market, final_targets, all_ranking
 
 if __name__ == "__main__":
     get_todays_signal()
+#코드 분리 요망
