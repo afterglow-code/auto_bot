@@ -169,7 +169,7 @@ def cached_forecast_chart(price_df, forecast_df, title):
     return build_forecast_chart(price_df, forecast_df, title=title)
 
 
-tabs = st.tabs(["보유종목", "기관용 자금 관리", "모멘텀"])
+tabs = st.tabs(["보유종목", "타점분석기", "모멘텀"])
 
 with tabs[0]:
     st.markdown("### 보유종목")
@@ -600,7 +600,7 @@ with tabs[0]:
 
 
 with tabs[1]:
-    st.subheader("기관용 자금 관리 (Institutional Execution)")
+    st.subheader("타점분석기 (Institutional Risk Manager)")
     st.caption("리스크 기반 포지션 사이징과 피라미딩 계획을 확인합니다.")
 
     inst_top_left, inst_top_right = st.columns(2)
