@@ -484,101 +484,14 @@ with tabs[0]:
                                     if price_df.empty or "Close" not in price_df.columns:
                                         st.caption("가격 데이터를 가져오지 못했습니다.")
                                     else:
-                                        applied_key = f"sr_order_applied_{t}"
-                                        if applied_key not in st.session_state:
-                                            st.session_state[applied_key] = 5
-
-                                        with st.form(key=f"sr_form_{t}"):
-                                            order_input = st.slider(
-                                                "지지/저항 민감도",
-                                                min_value=5,
-                                                max_value=60,
-                                                value=int(st.session_state[applied_key]),
-                                                step=5,
-                                                key=f"sr_order_input_{t}",
-                                            )
-                                            apply_order = st.form_submit_button("민감도 적용")
-
-                                        if apply_order:
-                                            st.session_state[applied_key] = order_input
-
-                                        # 지지/저항 차트
-                                        fig_sr, sup, res = cached_support_resistance(
-                                            price_df,
-                                            order=int(st.session_state[applied_key]),
-                                            title=f"{name} 지지/저항",
-                                            plot_candlestick=st.session_state['use_candlestick'],
+                                        from streamlit_ui import render_support_resistance_and_forecast
+                                        render_support_resistance_and_forecast(
+                                            ticker=t,
+                                            price_df=price_df,
+                                            name=name,
+                                            key_suffix="holdings",
+                                            plot_candlestick=st.session_state['use_candlestick']
                                         )
-                                        s1, s2, s3 = st.columns(3)
-                                        s1.metric("현재가", f"{float(price_df['Close'].iloc[-1]):,.0f}원")
-                                        s2.metric("지지선", f"{float(sup):,.0f}원")
-                                        s3.metric("저항선", f"{float(res):,.0f}원")
-                                        st.plotly_chart(fig_sr, use_container_width=True)
-                                        
-                                        st.divider()
-                                        st.markdown("**📈 AI 예측 모델 (30일)**")
-
-                                        ai_cache_key = f"ai_forecast_cache_{t}"
-                                        ai_sig = (
-                                            len(price_df),
-                                            str(price_df.index.max()),
-                                            float(price_df['Close'].iloc[-1])
-                                        )
-
-                                        cache_entry = st.session_state.get(ai_cache_key)
-                                        if (
-                                            cache_entry is None
-                                            or cache_entry.get("sig") != ai_sig
-                                        ):
-                                            try:
-                                                with st.spinner("AI 모델 계산 중..."):
-                                                    forecasts = get_ai_forecasts(price_df, prophet_periods=30, neural_periods=5, xgb_periods=5)
-                                                st.session_state[ai_cache_key] = {
-                                                    "sig": ai_sig,
-                                                    **forecasts,
-                                                }
-                                            except Exception as e:
-                                                st.error(f"예측 실패: {e}")
-                                                st.session_state[ai_cache_key] = None
-
-                                        if ai_cache_key in st.session_state and st.session_state[ai_cache_key]:
-                                            cached = st.session_state[ai_cache_key]
-
-                                            # 3개 모델을 2행으로 배치 (Prophet | NeuralProphet / XGBoost | 빈공간)
-                                            col1, col2 = st.columns(2)
-
-                                            with col1:
-                                                st.markdown("**Prophet**")
-                                                try:
-                                                    fig_pf = cached_forecast_chart(price_df, cached["prophet"], title=f"{name} Prophet")
-                                                    st.plotly_chart(fig_pf, use_container_width=True)
-                                                    last = cached["prophet"].iloc[-1]
-                                                    st.caption(f"예측: {last['yhat']:.2f} / 하단: {last.get('yhat_lower', 0):.2f} / 상단: {last.get('yhat_upper', 0):.2f}")
-                                                except Exception as e:
-                                                    st.error(f"예측 실패: {e}")
-
-                                            with col2:
-                                                st.markdown("**NeuralProphet**")
-                                                try:
-                                                    fig_np = cached_forecast_chart(price_df, cached["neural"], title=f"{name} NeuralProphet")
-                                                    st.plotly_chart(fig_np, use_container_width=True)
-                                                    last_np = cached["neural"].iloc[-1]
-                                                    st.caption(f"예측: {last_np['yhat']:.2f}")
-                                                except Exception as e:
-                                                    st.error(f"예측 실패: {e}")
-
-                                            col3, col4 = st.columns(2)
-
-                                            with col3:
-                                                st.markdown("**XGBoost (상승확률)**")
-                                                try:
-                                                    for idx, row in cached["xgboost"].iterrows():
-                                                        date_str = row['ds'].strftime('%m/%d')
-                                                        prob = row['probability']
-                                                        color = "green" if prob > 0.5 else "red"
-                                                        st.markdown(f"{date_str}: <span style='color:{color};font-weight:bold'>{prob*100:.1f}%</span> 상승", unsafe_allow_html=True)
-                                                except Exception as e:
-                                                    st.error(f"예측 실패: {e}")
 
                                 with tab_funda:
                                     funda_hist = load_fundamental_history(t, f_start_date, f_end_date)
@@ -1041,10 +954,20 @@ with tabs[2]:
 
                 run_btn = st.form_submit_button("분석 실행", use_container_width=True)
 
-            should_run = run_btn
             if run_btn:
                 st.session_state['use_candlestick'] = use_candlestick_m
                 st.session_state['show_rr_lines'] = show_rr_lines_m
+                st.session_state['momentum_analysis_running'] = True
+                st.session_state['momentum_saved_ticker'] = ticker
+                st.session_state['momentum_saved_entry'] = entry_price
+                st.session_state['momentum_saved_history_rows'] = history_rows_m
+
+            # session_state에 저장된 상태가 있으면 계속 표시
+            should_run = st.session_state.get('momentum_analysis_running', False)
+            if should_run:
+                ticker = st.session_state.get('momentum_saved_ticker', ticker)
+                entry_price = st.session_state.get('momentum_saved_entry', entry_price)
+                history_rows_m = st.session_state.get('momentum_saved_history_rows', history_rows_m)
 
             if should_run and ticker:
                 try:
@@ -1178,101 +1101,14 @@ with tabs[2]:
                                     st.pyplot(fig)
 
                             with tab_sr:
-                                applied_key = f"sr_order_applied_m_{ticker}"
-                                if applied_key not in st.session_state:
-                                    st.session_state[applied_key] = 5
-
-                                with st.form(key=f"sr_form_m_{ticker}"):
-                                    order_input = st.slider(
-                                        "지지/저항 민감도",
-                                        min_value=5,
-                                        max_value=60,
-                                        value=int(st.session_state[applied_key]),
-                                        step=5,
-                                        key=f"sr_order_input_m_{ticker}",
-                                    )
-                                    apply_order = st.form_submit_button("민감도 적용")
-
-                                if apply_order:
-                                    st.session_state[applied_key] = order_input
-
-                                # 지지/저항 차트
-                                fig_sr, sup, res = cached_support_resistance(
-                                    df_daily,
-                                    order=int(st.session_state[applied_key]),
-                                    title=f"[{ticker}] 지지/저항",
-                                    plot_candlestick=False,
+                                from streamlit_ui import render_support_resistance_and_forecast
+                                render_support_resistance_and_forecast(
+                                    ticker=ticker,
+                                    price_df=df_daily,
+                                    name=f"[{ticker}]",
+                                    key_suffix="momentum",
+                                    plot_candlestick=False
                                 )
-                                s1, s2, s3 = st.columns(3)
-                                s1.metric("현재가", f"{float(df_daily['Close'].iloc[-1]):,.2f}" if not ticker.isdigit() else f"{float(df_daily['Close'].iloc[-1]):,.0f}원")
-                                s2.metric("지지선", f"{float(sup):,.2f}" if not ticker.isdigit() else f"{float(sup):,.0f}원")
-                                s3.metric("저항선", f"{float(res):,.2f}" if not ticker.isdigit() else f"{float(res):,.0f}원")
-                                st.plotly_chart(fig_sr, use_container_width=True)
-                                
-                                st.divider()
-                                st.markdown("**📈 AI 예측 모델 (30일)**")
-
-                                ai_cache_key = f"ai_forecast_cache_m_{ticker}"
-                                ai_sig = (
-                                    len(df_daily),
-                                    str(df_daily.index.max()),
-                                    float(df_daily['Close'].iloc[-1])
-                                )
-
-                                cache_entry = st.session_state.get(ai_cache_key)
-                                if (
-                                    cache_entry is None
-                                    or cache_entry.get("sig") != ai_sig
-                                ):
-                                    try:
-                                        with st.spinner("AI 모델 계산 중..."):
-                                            forecasts = get_ai_forecasts(df_daily, prophet_periods=30, neural_periods=5, xgb_periods=5)
-                                        st.session_state[ai_cache_key] = {
-                                            "sig": ai_sig,
-                                            **forecasts,
-                                        }
-                                    except Exception as e:
-                                        st.error(f"예측 실패: {e}")
-                                        st.session_state[ai_cache_key] = None
-
-                                if ai_cache_key in st.session_state and st.session_state[ai_cache_key]:
-                                    cached = st.session_state[ai_cache_key]
-
-                                    # 3개 모델을 2행으로 배치 (Prophet | NeuralProphet / XGBoost | 빈공간)
-                                    col1, col2 = st.columns(2)
-
-                                    with col1:
-                                        st.markdown("**Prophet**")
-                                        try:
-                                            fig_pf = cached_forecast_chart(df_daily, cached["prophet"], title=f"[{ticker}] Prophet")
-                                            st.plotly_chart(fig_pf, use_container_width=True)
-                                            last = cached["prophet"].iloc[-1]
-                                            st.caption(f"예측: {last['yhat']:.2f} / 하단: {last.get('yhat_lower', 0):.2f} / 상단: {last.get('yhat_upper', 0):.2f}")
-                                        except Exception as e:
-                                            st.error(f"예측 실패: {e}")
-
-                                    with col2:
-                                        st.markdown("**NeuralProphet**")
-                                        try:
-                                            fig_np = cached_forecast_chart(df_daily, cached["neural"], title=f"[{ticker}] NeuralProphet")
-                                            st.plotly_chart(fig_np, use_container_width=True)
-                                            last_np = cached["neural"].iloc[-1]
-                                            st.caption(f"예측: {last_np['yhat']:.2f}")
-                                        except Exception as e:
-                                            st.error(f"예측 실패: {e}")
-
-                                    col3, col4 = st.columns(2)
-
-                                    with col3:
-                                        st.markdown("**XGBoost (상승확률)**")
-                                        try:
-                                            for idx, row in cached["xgboost"].iterrows():
-                                                date_str = row['ds'].strftime('%m/%d')
-                                                prob = row['probability']
-                                                color = "green" if prob > 0.5 else "red"
-                                                st.markdown(f"{date_str}: <span style='color:{color};font-weight:bold'>{prob*100:.1f}%</span> 상승", unsafe_allow_html=True)
-                                        except Exception as e:
-                                            st.error(f"예측 실패: {e}")
                     else:
                         st.error("데이터를 찾을 수 없습니다.")
                 except Exception as e:
