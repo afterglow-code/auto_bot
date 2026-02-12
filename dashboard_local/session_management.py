@@ -74,6 +74,11 @@ def initialize_session_state():
 def set_analysis_target(ticker, price):
     st.session_state['ticker_for_rr'] = ticker
     st.session_state['price_for_rr'] = float(price)
+    st.session_state['momentum_analysis_running'] = True
+    st.session_state['momentum_saved_ticker'] = ticker
+    st.session_state['momentum_saved_entry'] = float(price)
+    st.session_state['momentum_ticker_input'] = ticker
+    st.session_state['momentum_entry_price'] = float(price)
 
 def sync_show_rr_lines(src_key):
     st.session_state['show_rr_lines'] = st.session_state.get(src_key, True)

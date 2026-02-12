@@ -936,9 +936,13 @@ with tabs[2]:
                 default_ticker = ""
 
             with st.form("momentum_analysis_form"):
+                if "momentum_ticker_input" not in st.session_state:
+                    st.session_state["momentum_ticker_input"] = default_ticker
+                if "momentum_entry_price" not in st.session_state:
+                    st.session_state["momentum_entry_price"] = default_price
                 c1, c2 = st.columns(2)
-                ticker = c1.text_input("종목코드", value=default_ticker, key="momentum_ticker_input").strip().upper()
-                entry_price = c2.number_input("매수단가 (0=현재가)", value=default_price, key="momentum_entry_price")
+                ticker = c1.text_input("종목코드", key="momentum_ticker_input").strip().upper()
+                entry_price = c2.number_input("매수단가 (0=현재가)", key="momentum_entry_price")
 
                 history_rows_m = st.selectbox("차트 데이터 표시 개수", options=[60, 120, 240, 500, "ALL"], index=1, key="momentum_history_rows")
                 use_candlestick_m = st.checkbox(
