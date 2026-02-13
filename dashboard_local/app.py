@@ -32,7 +32,6 @@ from chart_plotting import (
     init_font,
     plot_ichimoku_rsi,
     plot_dynamic_ichimoku_rsi,
-    plot_cloud_bbands_rr,
     plot_support_resistance,
     compute_prophet_forecast,
     compute_neuralprophet_forecast,
@@ -123,22 +122,6 @@ def _freeze_rr(rr_data):
 
 
 @st.cache_data(show_spinner=False)
-def cached_cloud_bbands_rr(price_df, title, entry, rr_frozen, plot_candlestick, show_rr):
-    rr_data = None
-    if rr_frozen:
-        entry_f, targets, stops = rr_frozen
-        rr_data = {"entry": entry_f, "targets": list(targets), "stops": list(stops)}
-    return plot_cloud_bbands_rr(
-        price_df,
-        title,
-        entry,
-        rr_data,
-        plot_candlestick=plot_candlestick,
-        show_rr=show_rr,
-    )
-
-
-@st.cache_data(show_spinner=False)
 def cached_support_resistance(price_df, order, title, plot_candlestick):
     return plot_support_resistance(
         price_df,
@@ -149,7 +132,7 @@ def cached_support_resistance(price_df, order, title, plot_candlestick):
 
 
 @st.cache_data(show_spinner=False)
-def cached_dynamic_ichimoku_rsi(view, title, entry, rr_frozen, plot_candlestick, show_rr):
+def cached_dynamic_ichimoku_rsi(view, title, entry, rr_frozen, plot_candlestick, show_rr, visible_tail_rows=None, show_bb=False):
     rr_data = None
     if rr_frozen:
         entry_f, targets, stops = rr_frozen
@@ -161,12 +144,14 @@ def cached_dynamic_ichimoku_rsi(view, title, entry, rr_frozen, plot_candlestick,
         rr_data,
         plot_candlestick=plot_candlestick,
         show_rr=show_rr,
+        visible_tail_rows=visible_tail_rows,
+        show_bb=show_bb,
     )
 
 
 @st.cache_data(show_spinner=False)
-def cached_forecast_chart(price_df, forecast_df, title):
-    return build_forecast_chart(price_df, forecast_df, title=title)
+def cached_forecast_chart(price_df, forecast_df, title, plot_candlestick=False):
+    return build_forecast_chart(price_df, forecast_df, title=title, plot_candlestick=plot_candlestick)
 
 
 tabs = st.tabs(["보유종목", "타점분석기", "모멘텀"])
@@ -461,13 +446,15 @@ with tabs[0]:
                                         view = price_df.copy()
                                         rr_frozen = _freeze_rr(rr_data)
                                         st.plotly_chart(
-                                            cached_cloud_bbands_rr(
+                                            cached_dynamic_ichimoku_rsi(
                                                 view,
                                                 f"{name} 가격",
                                                 entry_for_rr,
                                                 rr_frozen,
                                                 st.session_state['use_candlestick'],
                                                 st.session_state['show_rr_lines'],
+                                                visible_tail_rows="ALL",
+                                                show_bb=True,
                                             ),
                                             use_container_width=True
                                         )
@@ -810,6 +797,15 @@ with tabs[1]:
                 if ai_cache_key in st.session_state and st.session_state[ai_cache_key]:
                     cached = st.session_state[ai_cache_key]
 
+                    # 캔들스틱 토글 추가
+                    st.checkbox(
+                        "봉차트 표시",
+                        value=st.session_state.get('use_candlestick', False),
+                        key="use_candlestick_inst",
+                        on_change=sync_use_candlestick,
+                        args=("use_candlestick_inst",),
+                    )
+
                     def add_inst_levels(fig):
                         entry_price = calc["entry"]
                         levels = [
@@ -831,7 +827,12 @@ with tabs[1]:
 
                     st.markdown("**Prophet**")
                     try:
-                        fig_pf = cached_forecast_chart(price_df, cached["prophet"], title=f"{calc['ticker']} Prophet")
+                        fig_pf = cached_forecast_chart(
+                            price_df, 
+                            cached["prophet"], 
+                            title=f"{calc['ticker']} Prophet",
+                            plot_candlestick=st.session_state.get('use_candlestick', False)
+                        )
                         fig_pf = add_inst_levels(fig_pf)
                         st.plotly_chart(fig_pf, use_container_width=True)
                     except Exception as e:
@@ -839,7 +840,12 @@ with tabs[1]:
 
                     st.markdown("**NeuralProphet**")
                     try:
-                        fig_np = cached_forecast_chart(price_df, cached["neural"], title=f"{calc['ticker']} NeuralProphet")
+                        fig_np = cached_forecast_chart(
+                            price_df, 
+                            cached["neural"], 
+                            title=f"{calc['ticker']} NeuralProphet",
+                            plot_candlestick=st.session_state.get('use_candlestick', False)
+                        )
                         fig_np = add_inst_levels(fig_np)
                         st.plotly_chart(fig_np, use_container_width=True)
                     except Exception as e:
@@ -955,12 +961,18 @@ with tabs[2]:
                     value=st.session_state['show_rr_lines'],
                     key="show_rr_lines_momentum",
                 )
+                show_bb_m = st.checkbox(
+                    "볼린저 밴드 표시",
+                    value=st.session_state.get('show_bb', False),
+                    key="show_bb_momentum",
+                )
 
                 run_btn = st.form_submit_button("분석 실행", use_container_width=True)
 
             if run_btn:
                 st.session_state['use_candlestick'] = use_candlestick_m
                 st.session_state['show_rr_lines'] = show_rr_lines_m
+                st.session_state['show_bb'] = show_bb_m
                 st.session_state['momentum_analysis_running'] = True
                 st.session_state['momentum_saved_ticker'] = ticker
                 st.session_state['momentum_saved_entry'] = entry_price
@@ -1028,6 +1040,7 @@ with tabs[2]:
                                         rr_frozen,
                                         st.session_state['use_candlestick'],
                                         st.session_state['show_rr_lines'],
+                                        show_bb=st.session_state.get('show_bb', False),
                                     ),
                                     use_container_width=True
                                 )
@@ -1058,6 +1071,7 @@ with tabs[2]:
                                         rr_frozen,
                                         st.session_state['use_candlestick'],
                                         st.session_state['show_rr_lines'],
+                                        show_bb=st.session_state.get('show_bb', False),
                                     ),
                                     use_container_width=True
                                 )
@@ -1088,6 +1102,7 @@ with tabs[2]:
                                         rr_frozen,
                                         st.session_state['use_candlestick'],
                                         st.session_state['show_rr_lines'],
+                                        show_bb=st.session_state.get('show_bb', False),
                                     ),
                                     use_container_width=True
                                 )
@@ -1111,7 +1126,7 @@ with tabs[2]:
                                     price_df=df_daily,
                                     name=f"[{ticker}]",
                                     key_suffix="momentum",
-                                    plot_candlestick=False
+                                    plot_candlestick=st.session_state['use_candlestick']
                                 )
                     else:
                         st.error("데이터를 찾을 수 없습니다.")

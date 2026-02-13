@@ -9,6 +9,7 @@ import numpy as np
 import platform
 import os
 import torch
+from datetime import timedelta
 from scipy.signal import argrelextrema
 
 from technical_indicators import calculate_ichimoku, calculate_rsi # noqa: E402
@@ -76,36 +77,110 @@ def plot_ichimoku_rsi(df, title, rr_data=None, show_rr=True):
     plt.tight_layout()
     return fig
 
-def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None, plot_candlestick=False, show_rr=True):
-    tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df)
-    rsi = calculate_rsi(df['Close'])
+def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None, plot_candlestick=False, show_rr=True, visible_tail_rows=None, show_bb=False):
+    # 1. Future Cloud를 위해 데이터프레임 확장 (26일)
+    last_date = df.index[-1]
+    # 인덱스가 DatetimeIndex인 경우와 아닌 경우 처리
+    if isinstance(last_date, pd.Timestamp):
+        future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=26, freq='B')
+        extension_index = future_dates
+    else:
+        # 날짜 인덱스가 아니면 정수 인덱스 확장 등으로 처리 (일단 날짜라고 가정)
+        # fallback for integer index
+        start_idx = df.index[-1] + 1 if isinstance(df.index[-1], int) else len(df)
+        extension_index = pd.RangeIndex(start=start_idx, stop=start_idx + 26)
 
+    # 빈 행이 추가된 확장 DF 생성
+    future_df = pd.DataFrame(index=extension_index, columns=df.columns)
+    df_extended = pd.concat([df, future_df])
+
+    # 2. 지표 계산 (확장된 DF 기반)
+    tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df_extended)
+    rsi = calculate_rsi(df_extended['Close'])
+
+    # 볼린저 밴드 계산
+    ma20 = df_extended['Close'].rolling(20).mean()
+    std20 = df_extended['Close'].rolling(20).std()
+    bb_upper = ma20 + (std20 * 2)
+    bb_lower = ma20 - (std20 * 2)
+
+    # 3. 보여줄 범위 슬라이싱 (Tail)
+    # visible_tail_rows가 지정되면 과거 데이터는 자르되, 미래 확장분(26일)은 포함해야 함
+    if visible_tail_rows and visible_tail_rows != "ALL":
+        try:
+            rows = int(visible_tail_rows)
+            # 원본 데이터에서의 시작 위치 계산
+            start_pos = max(0, len(df) - rows)
+            # 슬라이싱: (원본의 마지막 rows개) + (확장된 26개)
+            # df_extended의 길이는 len(df) + 26
+            # 우리가 원하는건 index[start_pos:]
+            df_disp = df_extended.iloc[start_pos:]
+            tenkan = tenkan.iloc[start_pos:]
+            kijun = kijun.iloc[start_pos:]
+            span_a = span_a.iloc[start_pos:]
+            span_b = span_b.iloc[start_pos:]
+            chikou = chikou.iloc[start_pos:]
+            rsi = rsi.iloc[start_pos:]
+            bb_upper = bb_upper.iloc[start_pos:]
+            bb_lower = bb_lower.iloc[start_pos:]
+            ma20 = ma20.iloc[start_pos:]
+        except ValueError:
+            df_disp = df_extended
+    else:
+        df_disp = df_extended
+
+    # 4. Plotly 차트 생성 (3단: Price / Volume / RSI)
     fig = make_subplots(
-        rows=2,
+        rows=3,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.7, 0.3],
-        subplot_titles=(title, "RSI")
+        vertical_spacing=0.03,
+        row_heights=[0.6, 0.15, 0.25],
+        subplot_titles=(title, "Volume", "RSI")
     )
+
+    # --- Row 1: Price & Ichimoku & BB ---
+    # 캔들/라인
     if plot_candlestick:
-        fig.add_trace(go.Candlestick(x=df.index,
-                                     open=df['Open'],
-                                     high=df['High'],
-                                     low=df['Low'],
-                                     close=df['Close'],
+        fig.add_trace(go.Candlestick(x=df_disp.index,
+                                     open=df_disp['Open'],
+                                     high=df_disp['High'],
+                                     low=df_disp['Low'],
+                                     close=df_disp['Close'],
                                      increasing=dict(line=dict(color=CANDLE_UP_COLOR, width=1), fillcolor=CANDLE_UP_COLOR),
                                      decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
                                      name='Candlestick'), row=1, col=1)
     else:
-            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#e2e8f0', width=2)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_disp.index, y=df_disp['Close'], name='Close', line=dict(color='#e2e8f0', width=2)), row=1, col=1)
+
+    # 볼린저 밴드 (옵션)
+    if show_bb:
+        fig.add_trace(go.Scatter(x=bb_upper.index, y=bb_upper, name='BB Upper', line=dict(color='#6366f1', width=1, dash='dot')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=ma20.index, y=ma20, name='BB Mid', line=dict(color='#6366f1', width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=bb_lower.index, y=bb_lower, name='BB Lower', line=dict(color='#6366f1', width=1, dash='dot')), row=1, col=1)
+
+    # 일목균형표
     fig.add_trace(go.Scatter(x=tenkan.index, y=tenkan, name='Tenkan', line=dict(color='#f59e0b', width=1)), row=1, col=1)
     fig.add_trace(go.Scatter(x=kijun.index, y=kijun, name='Kijun', line=dict(color='#3b82f6', width=1)), row=1, col=1)
-    # Cloud (Span A/B)
-    fig.add_trace(go.Scatter(x=span_a.index, y=span_a, name='Span A', line=dict(color='#10b981', width=1)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=span_b.index, y=span_b, name='Span B', line=dict(color='#ef4444', width=1), fill='tonexty', fillcolor='rgba(16,185,129,0.15)'), row=1, col=1)
+    
+    # 구름대 (Span A, Span B)
+    # Span A, B는 미래 영역까지 값이 있음. fill='tonexty'를 위해 순서 중요.
+    # 보통 Span A를 먼저 그리고 Span B를 그릴 때 fill='tonexty'하면 두 선 사이가 채워짐.
+    fig.add_trace(go.Scatter(x=span_a.index, y=span_a, name='Span A', line=dict(color='#10b981', width=1), showlegend=True), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=span_b.index, 
+        y=span_b, 
+        name='Span B', 
+        line=dict(color='#ef4444', width=1), 
+        fill='tonexty', 
+        fillcolor='rgba(128, 128, 128, 0.1)', # 회색 반투명 채우기 (상승/하락 구분은 복잡하므로 단순화)
+        showlegend=True
+    ), row=1, col=1)
+    
+    # 후행스팬 (Chikou)
     fig.add_trace(go.Scatter(x=chikou.index, y=chikou, name='Chikou', line=dict(color='#6b7280', width=1)), row=1, col=1)
 
+    # 진입가/손익비 라인
     if entry_price:
         fig.add_hline(y=entry_price, line=dict(color='#0ea5e9', width=2, dash='dash'), row=1, col=1)
 
@@ -118,72 +193,62 @@ def plot_dynamic_ichimoku_rsi(df, title, entry_price=None, rr_data=None, plot_ca
         for i, sl in enumerate(stops):
             fig.add_hline(y=sl, line=dict(color=colors[i % len(colors)], width=1, dash='dot'), row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=rsi.index, y=rsi, name='RSI', line=dict(color='#8b5cf6', width=1)), row=2, col=1)
-    fig.add_hline(y=70, line=dict(color='#ef4444', width=1, dash='dash'), row=2, col=1)
-    fig.add_hline(y=30, line=dict(color='#10b981', width=1, dash='dash'), row=2, col=1)
+    # --- Row 2: Volume ---
+    # 색상: 전일 대비 상승이면 빨강(한국기준) or Green, 하락이면 파랑 or Red. 
+    # 여기선 단순화를 위해 회색이나 고정색, 혹은 캔들 색상 따라가기.
+    # Close가 Open보다 크면 양봉(UP), 작으면 음봉(DOWN) 색상 사용
+    colors_vol = [CANDLE_UP_COLOR if (o <= c) else CANDLE_DOWN_COLOR for o, c in zip(df_disp['Open'], df_disp['Close'])]
+    # df_disp의 마지막 26개는 NaN이므로 색상 계산시 주의. NaN이면 기본색
+    # zip은 짧은 쪽 기준이므로 NaN 데이터(Close/Open이 NaN)에 대해서는 루프가 돌지 않거나 에러 날 수 있음.
+    # 안전하게 처리:
+    vol_colors = []
+    for i in range(len(df_disp)):
+        if pd.isna(df_disp['Close'].iloc[i]) or pd.isna(df_disp['Open'].iloc[i]):
+            vol_colors.append('#555555')
+        else:
+            if df_disp['Close'].iloc[i] >= df_disp['Open'].iloc[i]:
+                vol_colors.append(CANDLE_UP_COLOR)
+            else:
+                vol_colors.append(CANDLE_DOWN_COLOR)
+    
+    fig.add_trace(go.Bar(
+        x=df_disp.index, 
+        y=df_disp['Volume'], 
+        name='Volume', 
+        marker_color=vol_colors,
+        showlegend=False
+    ), row=2, col=1)
 
-    fig.update_layout(height=520, showlegend=True, legend_orientation='h', legend_y=1.02, legend_x=0,
-                      legend=dict(font=dict(color='#E0E0E0')),
-                      plot_bgcolor='#131722', # TradingView dark theme background
-                      paper_bgcolor='#131722', # TradingView dark theme paper background
-                      font=dict(color='#E0E0E0'), # Light text for dark theme
-                      xaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
-                      yaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39')
-                     )
+    # --- Row 3: RSI ---
+    fig.add_trace(go.Scatter(x=rsi.index, y=rsi, name='RSI', line=dict(color='#8b5cf6', width=1)), row=3, col=1)
+    fig.add_hline(y=70, line=dict(color='#ef4444', width=1, dash='dash'), row=3, col=1)
+    fig.add_hline(y=30, line=dict(color='#10b981', width=1, dash='dash'), row=3, col=1)
+
+    # Layout 설정
+    fig.update_layout(
+        height=700, # 높이 증가
+        showlegend=True, 
+        legend_orientation='h', 
+        legend_y=1.02, 
+        legend_x=0,
+        legend=dict(font=dict(color='#E0E0E0')),
+        plot_bgcolor='#131722', 
+        paper_bgcolor='#131722', 
+        font=dict(color='#E0E0E0'),
+        xaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39', rangeslider=dict(visible=False)),
+        xaxis2=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
+        xaxis3=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
+        yaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
+        yaxis2=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39', title="Vol"),
+        yaxis3=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39', range=[0, 100]),
+        margin=dict(l=10, r=10, t=30, b=10)
+    )
+
+    # Remove range slider from all xaxes if present
+    fig.update_xaxes(rangeslider_visible=False)
 
     return fig
 
-def plot_cloud_bbands_rr(df, title, entry_price=None, rr_data=None, plot_candlestick=False, show_rr=True):
-    tenkan, kijun, span_a, span_b, chikou = calculate_ichimoku(df)
-    ma20 = df['Close'].rolling(20).mean()
-    std20 = df['Close'].rolling(20).std()
-    upper = ma20 + (std20 * 2)
-    lower = ma20 - (std20 * 2)
-
-    fig = go.Figure()
-
-    if plot_candlestick:
-        fig.add_trace(go.Candlestick(x=df.index,
-                                     open=df['Open'],
-                                     high=df['High'],
-                                     low=df['Low'],
-                                     close=df['Close'],
-                                     increasing=dict(line=dict(color=CANDLE_UP_COLOR, width=1), fillcolor=CANDLE_UP_COLOR),
-                                     decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
-                                     name='Candlestick'))
-    else:
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#e2e8f0', width=2)))
-
-    # Ichimoku cloud only
-    fig.add_trace(go.Scatter(x=span_a.index, y=span_a, name='Span A', line=dict(color='#10b981', width=1)))
-    fig.add_trace(go.Scatter(x=span_b.index, y=span_b, name='Span B', line=dict(color='#ef4444', width=1), fill='tonexty', fillcolor='rgba(16,185,129,0.15)'))
-
-    # Bollinger Bands
-    fig.add_trace(go.Scatter(x=upper.index, y=upper, name='BB Upper', line=dict(color='#6366f1', width=1, dash='dot')))
-    fig.add_trace(go.Scatter(x=ma20.index, y=ma20, name='BB Mid', line=dict(color='#6366f1', width=1)))
-    fig.add_trace(go.Scatter(x=lower.index, y=lower, name='BB Lower', line=dict(color='#6366f1', width=1, dash='dot')))
-
-    if entry_price:
-        fig.add_hline(y=entry_price, line=dict(color='#0ea5e9', width=2, dash='dash'))
-
-    if rr_data and show_rr:
-        targets = rr_data.get('targets', [])
-        stops = rr_data.get('stops', [])
-        colors = ['#16a34a', '#f59e0b', '#ef4444']
-        for i, tp in enumerate(targets):
-            fig.add_hline(y=tp, line=dict(color=colors[i % len(colors)], width=1, dash='dot'))
-        for i, sl in enumerate(stops):
-            fig.add_hline(y=sl, line=dict(color=colors[i % len(colors)], width=1, dash='dot'))
-
-    fig.update_layout(height=520, showlegend=True, legend_orientation='h', legend_y=1.02, legend_x=0, title=title,
-                      legend=dict(font=dict(color='#E0E0E0')),
-                      plot_bgcolor='#131722', # TradingView dark theme background
-                      paper_bgcolor='#131722', # TradingView dark theme paper background
-                      font=dict(color='#E0E0E0'), # Light text for dark theme
-                      xaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39'),
-                      yaxis=dict(showgrid=True, gridcolor='#2A2E39', zerolinecolor='#2A2E39')
-                     )
-    return fig
 
 
 def plot_support_resistance(df, order=20, title="Support/Resistance", plot_candlestick=False):
@@ -275,9 +340,21 @@ def plot_prophet_forecast(df, periods=30, title="Prophet Forecast"):
     return forecast
 
 
-def build_forecast_chart(df, forecast, title="Prophet Forecast"):
+def build_forecast_chart(df, forecast, title="Prophet Forecast", plot_candlestick=False):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)))
+    if plot_candlestick:
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df['Open'],
+            high=df['High'],
+            low=df['Low'],
+            close=df['Close'],
+            increasing=dict(line=dict(color=CANDLE_UP_COLOR, width=1), fillcolor=CANDLE_UP_COLOR),
+            decreasing=dict(line=dict(color=CANDLE_DOWN_COLOR, width=1), fillcolor=CANDLE_DOWN_COLOR),
+            name='Candlestick'
+        ))
+    else:
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f2937', width=2)))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast', line=dict(color='#0ea5e9', width=2)))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], name='Upper', line=dict(color='rgba(14,165,233,0.2)', width=1), showlegend=False))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], name='Lower', line=dict(color='rgba(14,165,233,0.2)', width=1), fill='tonexty', fillcolor='rgba(14,165,233,0.15)', showlegend=False))

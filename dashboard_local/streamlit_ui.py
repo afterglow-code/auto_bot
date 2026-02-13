@@ -101,7 +101,7 @@ def render_support_resistance_and_forecast(ticker, price_df, name=None, key_suff
         with col1:
             st.markdown("**Prophet**")
             try:
-                fig_pf = build_forecast_chart(price_df, cached["prophet"], title=f"[{ticker}] Prophet")
+                fig_pf = build_forecast_chart(price_df, cached["prophet"], title=f"[{ticker}] Prophet", plot_candlestick=plot_candlestick)
                 st.plotly_chart(fig_pf, use_container_width=True)
                 last = cached["prophet"].iloc[-1]
                 st.caption(f"예측: {last['yhat']:.2f} / 하단: {last.get('yhat_lower', 0):.2f} / 상단: {last.get('yhat_upper', 0):.2f}")
@@ -111,7 +111,7 @@ def render_support_resistance_and_forecast(ticker, price_df, name=None, key_suff
         with col2:
             st.markdown("**NeuralProphet**")
             try:
-                fig_np = build_forecast_chart(price_df, cached["neural"], title=f"[{ticker}] NeuralProphet")
+                fig_np = build_forecast_chart(price_df, cached["neural"], title=f"[{ticker}] NeuralProphet", plot_candlestick=plot_candlestick)
                 st.plotly_chart(fig_np, use_container_width=True)
                 last_np = cached["neural"].iloc[-1]
                 st.caption(f"예측: {last_np['yhat']:.2f}")
