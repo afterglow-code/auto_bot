@@ -5,13 +5,14 @@ import pandas as pd
 import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz
+import time
 
 # 리팩토링된 공통 모듈 및 설정 가져오기
 from common import send_telegram
 import config as cfg
 
-def get_latest_signals():
-    """모멘텀 돌파 종목을 병렬로 스캔하는 메인 함수"""
+def analyze_mosig_strategy():
+    """모멘텀 돌파 종목을 병렬로 스캔하고 결과 리스트를 반환하는 함수"""
     print(f"[{datetime.datetime.now()}] 모멘텀 돌파 스캔 시작...")
     
     # 1. 대상 종목 선정
@@ -23,7 +24,6 @@ def get_latest_signals():
     except Exception as e:
         error_msg = f"❌ [모시그 봇] 대상 종목 선정 실패: {e}"
         print(error_msg)
-        send_telegram(error_msg, chat_id=cfg.CHAT_ID_1P)
         return []
 
     # 결과 담을 리스트
@@ -32,7 +32,7 @@ def get_latest_signals():
     total = len(target_stocks)
 
     # --- 병렬 처리 로직 ---
-    with ThreadPoolExecutor(max_workers=cfg.MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=cfg.MOSIG_MAX_WORKERS) as executor:
         # 개별 종목 데이터 수집 및 분석 작업을 제출
         future_to_stock = {
             executor.submit(_fetch_and_check, row['Code'], row['Name'], start_date): row['Name']
@@ -53,6 +53,7 @@ def get_latest_signals():
 def _fetch_and_check(code, name, start_date):
     """(내부 함수) 단일 종목 데이터 수집 및 신호 분석"""
     try:
+        time.sleep(cfg.MOSIG_REQUEST_DELAY)
         df = fdr.DataReader(code, start_date)
         if len(df) < 20: return None
 
@@ -89,8 +90,6 @@ def check_breakout_signal(df, code, name):
         }
     
     return False, None
-
-
 
 def format_message(candidates):
     """텔레그램 메시지 포맷팅"""
@@ -129,7 +128,7 @@ def format_message(candidates):
 # --- 메인 실행 ---
 if __name__ == "__main__":
     # 1. 종목 스캔
-    detected_stocks = get_latest_signals()
+    detected_stocks = analyze_mosig_strategy()
     
     # 2. 메시지 만들기
     message_text = format_message(detected_stocks)

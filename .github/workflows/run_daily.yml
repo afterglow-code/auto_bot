@@ -37,12 +37,23 @@ jobs:
       run: |
         pip install -r requirements.txt
 
+    # === 0. 통합 봇 실행 (기본/스케줄) ===
+    - name: Run Total Bot (Integrated)
+      if: |
+        github.event_name == 'schedule' || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'all')
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+        CHAT_ID_1P: ${{ secrets.CHAT_ID_1P }}
+      run: python total_daily_report.py
+      continue-on-error: true
+
+    # === 개별 봇 실행 (수동 선택 시에만) ===
+
     # 1. ETF Bot
     - name: Run ETF Bot
-      # 스케줄 실행이거나, 'all' 선택이거나, 'etf' 선택일 때만 실행
-      if: |
-        always() && 
-        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'etf')
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'etf'
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
@@ -51,10 +62,7 @@ jobs:
 
     # 2. Stock Bot (국내)
     - name: Run Stock Bot
-      # 스케줄 실행이거나, 'all' 선택이거나, 'stock' 선택일 때만 실행
-      if: |
-        always() && 
-        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'stock')
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'stock'
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
@@ -63,10 +71,7 @@ jobs:
 
     # 3. US Stock Bot (미국)
     - name: Run US Stock Bot
-      # 스케줄 실행이거나, 'all' 선택이거나, 'us_stock' 선택일 때만 실행
-      if: |
-        always() && 
-        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'us_stock')
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'us_stock'
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
@@ -75,10 +80,7 @@ jobs:
 
     # 4. MoSig Bot (모멘텀 시그널)
     - name: Run MoSig Bot
-      # 스케줄 실행이거나, 'all' 선택이거나, 'mosig' 선택일 때만 실행
-      if: |
-        always() && 
-        (github.event_name == 'schedule' || github.event.inputs.target == 'all' || github.event.inputs.target == 'mosig')
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'mosig'
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHAT_ID_1P: ${{ secrets.CHAT_ID_1P }}

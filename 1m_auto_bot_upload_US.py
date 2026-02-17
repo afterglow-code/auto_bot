@@ -11,10 +11,24 @@ import re
 from common import send_telegram, fetch_data_in_parallel
 import config as cfg
 
-def get_todays_signal():
+def analyze_us_stock_strategy():
+    """미국 주식 전략 분석 로직 - 결과 딕셔너리 반환"""
     print("="*70)
     print("📊 미국 주식 가중모멘텀 전략 (S&P500 Top 200)")
     print("="*70)
+    
+    result = {
+        'type': 'US',
+        'market_status': '정보 없음',
+        'is_bull_market': False,
+        'is_neutral_market': False,
+        'final_targets': [],
+        'reason': '',
+        'market_index_val': 0,
+        'weighted_score': {},
+        'raw_data': None,
+        'error': None
+    }
     
 # 1. 대상 종목 리스트 구성
     try:
@@ -38,10 +52,9 @@ def get_todays_signal():
         print(f"✅ 분석 대상: 총 {len(target_tickers)}개 종목 (S&P500 + NASDAQ100 + {cfg.US_DEFENSE_ASSET})")
 
     except Exception as e:
-        error_msg = f"❌ [미국 주식 봇] 종목 리스트 확보 실패: {e}"
-        print(error_msg)
-        send_telegram(error_msg)
-        return
+        result['error'] = f"종목 리스트 확보 실패: {e}"
+        print(result['error'])
+        return result
 
     # 2. 데이터 다운로드 (병렬 처리로 변경)
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -60,12 +73,12 @@ def get_todays_signal():
             raise Exception("유효한 데이터를 하나도 가져오지 못했습니다.")
             
         print(f"✅ {len(raw_data.columns)}개 종목 데이터 다운로드 완료")
+        result['raw_data'] = raw_data
 
     except Exception as e:
-        error_msg = f"❌ [미국 주식 봇] 데이터 다운로드 치명적 오류: {e}"
-        print(error_msg)
-        send_telegram(error_msg)
-        return
+        result['error'] = f"데이터 다운로드 치명적 오류: {e}"
+        print(result['error'])
+        return result
 
     # 3. 전략 계산 (가중 평균 모멘텀)
     try:
@@ -76,6 +89,7 @@ def get_todays_signal():
         mom_6m = raw_data.pct_change(120).iloc[-1]
 
         weighted_score = (mom_1m.fillna(0) * w1) + (mom_3m.fillna(0) * w2) + (mom_6m.fillna(0) * w3)
+        result['weighted_score'] = weighted_score
 
         # 시장 타이밍 (SPY 60일선)
         ma_series = market_index.rolling(window=60).mean()
@@ -83,18 +97,23 @@ def get_todays_signal():
         prev_ma = ma_series.iloc[-6] # 5일 전 MA
         current_market_index = market_index.iloc[-1]
         
+        result['market_index_val'] = current_market_index
+        
         ma_is_rising = current_ma > prev_ma
         is_bull_market = current_market_index > current_ma
         is_neutral_market = not is_bull_market and ma_is_rising
+        
+        result['is_bull_market'] = is_bull_market
+        result['is_neutral_market'] = is_neutral_market
 
         market_status = "🔴 상승장" if is_bull_market else "🟠 중립장" if is_neutral_market else "🔵 하락장"
+        result['market_status'] = market_status
         print(f"✅ 시장 판단: {market_status}")
 
     except Exception as e:
-        error_msg = f"❌ [미국 주식 봇] 지표 계산 중 오류: {e}"
-        print(error_msg)
-        send_telegram(error_msg)
-        return
+        result['error'] = f"지표 계산 중 오류: {e}"
+        print(result['error'])
+        return result
 
     # 4. 목표 종목 선정
     final_targets = [] 
@@ -143,9 +162,28 @@ def get_todays_signal():
         final_targets = [(defense_asset, 1.0)]
         reason = f"하락장 방어({cfg.US_MARKET_INDEX} 이탈)"
 
+    result['final_targets'] = final_targets
+    result['reason'] = reason
+    
+    return result
+
+def get_todays_signal():
+    # 분석 실행
+    result = analyze_us_stock_strategy()
+    
+    if result['error']:
+        send_telegram(f"❌ [미국 주식 봇] {result['error']}")
+        return
 
     # 5. 메시지 전송
-    msg = create_message(is_bull_market, is_neutral_market, final_targets, reason, weighted_score, raw_data)
+    msg = create_message(
+        result['is_bull_market'], 
+        result['is_neutral_market'], 
+        result['final_targets'], 
+        result['reason'], 
+        result['weighted_score'], 
+        result['raw_data']
+    )
     
     print("\n" + "="*70)
     print("메시지 미리보기:")
@@ -197,7 +235,7 @@ def create_message(is_bull_market, is_neutral_market, final_targets, reason, wei
         msg += "*이번 달 목표 (실시간 순위):*\n"
         msg += target_list_msg
 
-    msg += "---------------------------------\"n"
+    msg += "---------------------------------\n"
     msg += f"_투자 원금: ${cfg.US_ASSETS:,}_"
     
     return msg

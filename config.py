@@ -44,6 +44,7 @@ ETF_TICKERS = {
     'PLUS K방산': '449170',
     'KODEX 미국30년국채액티브(H)': '484790',
     'KODEX 코스닥150': '229200',
+    'Tiger 200 금융': '139270',
 }
 ETF_MARKET_INDEX = 'KS11' # 시장 지수 (코스피)
 ETF_DEFENSE_ASSET = 'KODEX 미국달러선물' # 방어 자산
@@ -63,6 +64,8 @@ MOSIG_TOP_N_KOSPI = 200   # 코스피 감시 대상 (시총 상위)
 MOSIG_TOP_N_KOSDAQ = 150  # 코스닥 감시 대상 (시총 상위)
 MOSIG_PICK_COUNT = 10     # 텔레그램으로 보낼 종목 수
 MOSIG_STRATEGY = 'value'  # 우선순위: 'value'(모멘텀점수), 'slope'(기울기), 'marcap'(시총)
+MOSIG_MAX_WORKERS = 3     # 모시그 전용 스레드 수 (차단 방지)
+MOSIG_REQUEST_DELAY = 0.1 # 요청 간 딜레이(초)
 
 # =========================================================
 # [성능 최적화 설정]

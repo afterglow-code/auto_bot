@@ -11,12 +11,28 @@ import re
 from common import send_telegram, fetch_data_in_parallel
 import config as cfg
 
-def get_todays_signal():
+def analyze_etf_strategy():
+    """ETF 전략 분석 로직 - 결과 딕셔너리 반환"""
     print("="*70)
     print("📊 한국 ETF 가중모멘텀 전략")
     print("="*70)
     print("⏳ 데이터 분석 중...")
     
+    result = {
+        'type': 'ETF',
+        'market_status': '정보 없음',
+        'is_bull_market': False,
+        'is_neutral_market': False,
+        'final_targets': [],
+        'reason': '',
+        'all_rankings': [],
+        'market_index_val': 0,
+        'ma60': 0,
+        'weighted_score': {},
+        'raw_data': None,
+        'error': None
+    }
+
     # 1. 데이터 준비 (config에서 설정값 로드)
     etf_tickers = cfg.ETF_TICKERS
     
@@ -35,12 +51,12 @@ def get_todays_signal():
             raise Exception("데이터 수집 실패: 유효한 ETF 데이터를 가져오지 못했습니다.")
             
         print(f"✅ {len(raw_data.columns)}개 ETF 데이터 수집 완료")
+        result['raw_data'] = raw_data
 
     except Exception as e:
-        error_msg = f"❌ [ETF 봇] 데이터 수집 오류: {e}"
-        print(error_msg)
-        send_telegram(error_msg)
-        return
+        result['error'] = f"데이터 수집 오류: {e}"
+        print(result['error'])
+        return result
 
     # 2. 가중 평균 모멘텀 계산
     try:
@@ -50,6 +66,7 @@ def get_todays_signal():
         mom_6m = raw_data.pct_change(120).iloc[-1]
 
         weighted_score = (mom_1m.fillna(0) * w1) + (mom_3m.fillna(0) * w2) + (mom_6m.fillna(0) * w3)
+        result['weighted_score'] = weighted_score
 
         # 시장 타이밍 (코스피 60일선)
         ma_series = market_index.rolling(window=60).mean()
@@ -57,20 +74,26 @@ def get_todays_signal():
         prev_ma = ma_series.iloc[-6] # 5일 전 MA
         current_market_index = market_index.iloc[-1]
         
+        result['market_index_val'] = current_market_index
+        result['ma60'] = current_ma
+        
         ma_is_rising = current_ma > prev_ma
         is_bull_market = current_market_index > current_ma
         is_neutral_market = not is_bull_market and ma_is_rising
+        
+        result['is_bull_market'] = is_bull_market
+        result['is_neutral_market'] = is_neutral_market
 
         market_status = "🔴 상승장" if is_bull_market else "🟠 중립장" if is_neutral_market else "🔵 하락장"
+        result['market_status'] = market_status
         print(f"✅ 시장 판단: {market_status}")
 
     except Exception as e:
-        error_msg = f"❌ [ETF 봇] 지표 계산 오류: {e}"
-        print(error_msg)
-        send_telegram(error_msg)
-        return
+        result['error'] = f"지표 계산 오류: {e}"
+        print(result['error'])
+        return result
 
-    # 3. 목표 종목 선정 (TOP 2 분산)
+    # 3. 목표 종목 선정 (TOP 3 분산)
     final_targets = []
     reason = ""
     all_rankings = []
@@ -81,6 +104,8 @@ def get_todays_signal():
     
     for rank, (name, score) in enumerate(top_assets.items(), 1):
         all_rankings.append({'rank': rank, 'name': name, 'score': score, 'price': raw_data[name].iloc[-1]})
+    
+    result['all_rankings'] = all_rankings
 
     # 상승장: 공격 100%
     if is_bull_market:
@@ -89,13 +114,17 @@ def get_todays_signal():
             final_targets = [(defense_asset, 1.0)]
             reason = "주도주 부재 → 달러 방어"
         else:
-            selected = [name for name, score in top_assets.items() if score > 0][:2]
+            selected = [name for name, score in top_assets.items() if score > 0][:3]
             if len(selected) == 1:
                 final_targets = [(selected[0], 1.0)]
                 reason = "단독 주도주"
             elif len(selected) == 2:
                 final_targets = [(selected[0], 0.5), (selected[1], 0.5)]
                 reason = "TOP 2 분산"
+            elif len(selected) == 3:
+                w = 1.0 / 3
+                final_targets = [(selected[0], w), (selected[1], w), (selected[2], w)]
+                reason = "TOP 3 분산"
             else:
                 final_targets = [(defense_asset, 1.0)]
                 reason = "상승 모멘텀 종목 없음 → 달러 방어"
@@ -107,11 +136,14 @@ def get_todays_signal():
             final_targets = [(defense_asset, 1.0)]
             reason = "주도주 부재 → 달러 100% 방어"
         else:
-            selected = [name for name, score in top_assets.items() if score > 0][:2]
+            selected = [name for name, score in top_assets.items() if score > 0][:3]
             if len(selected) == 1:
                 final_targets = [(selected[0], 0.5), (defense_asset, 0.5)]
             elif len(selected) == 2:
                 final_targets = [(selected[0], 0.25), (selected[1], 0.25), (defense_asset, 0.5)]
+            elif len(selected) == 3:
+                w = 0.5 / 3
+                final_targets = [(selected[0], w), (selected[1], w), (selected[2], w), (defense_asset, 0.5)]
             else:
                 final_targets = [(defense_asset, 1.0)]
                 reason = "상승 모멘텀 종목 없음 → 달러 100% 방어"
@@ -121,9 +153,31 @@ def get_todays_signal():
         final_targets = [(defense_asset, 1.0)]
         reason = f"하락장 방어 ({cfg.ETF_MARKET_INDEX} < MA60)"
 
+    result['final_targets'] = final_targets
+    result['reason'] = reason
+    
+    return result
 
-    # 4. 메시지 생성
-    msg = create_message(is_bull_market, is_neutral_market, final_targets, all_rankings, reason, market_index, weighted_score, raw_data)
+def get_todays_signal():
+    # 분석 실행
+    result = analyze_etf_strategy()
+    
+    if result['error']:
+        send_telegram(f"❌ [ETF 봇] {result['error']}")
+        return
+
+    # 메시지 생성
+    msg = create_message(
+        result['is_bull_market'], 
+        result['is_neutral_market'], 
+        result['final_targets'], 
+        result['all_rankings'], 
+        result['reason'], 
+        result['market_index_val'], # 값 전달
+        result['ma60'],             # 값 전달
+        result['weighted_score'], 
+        result['raw_data']
+    )
     
     # 콘솔 출력 (HTML 태그 제거 버전)
     print("\n" + "="*70)
@@ -135,7 +189,7 @@ def get_todays_signal():
     
     send_telegram(msg)
 
-def create_message(is_bull_market, is_neutral_market, final_targets, all_rankings, reason, market_index, weighted_score, raw_data):
+def create_message(is_bull_market, is_neutral_market, final_targets, all_rankings, reason, current_market_index, ma60, weighted_score, raw_data):
     """텔레그램 메시지를 생성하는 함수"""
     today_dt = datetime.now(pytz.timezone('Asia/Seoul'))
     is_rebalance_period = (cfg.REBALANCE_PERIOD_START <= today_dt.day <= cfg.REBALANCE_PERIOD_END)
@@ -144,9 +198,17 @@ def create_message(is_bull_market, is_neutral_market, final_targets, all_ranking
     msg = f"<b>🇰🇷 한국 ETF 가중모멘텀 [{today_dt.strftime('%Y-%m-%d %H:%M')}]</b>\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
     
-    current_market_index = market_index.iloc[-1]
-    ma60 = market_index.rolling(window=60).mean().iloc[-1]
-    market_change_pct = ((current_market_index - ma60) / ma60) * 100
+    # [수정] market_index가 시리즈일 수도 있고 값일 수도 있음 (호환성 처리)
+    # 기존 코드와의 호환성을 위해 타입 체크
+    if isinstance(current_market_index, pd.Series):
+        current_market_index = current_market_index.iloc[-1]
+    
+    if isinstance(ma60, pd.Series):
+        ma60 = ma60.iloc[-1]
+
+    market_change_pct = 0
+    if ma60 != 0:
+        market_change_pct = ((current_market_index - ma60) / ma60) * 100
     
     msg += f"📈 <b>시장 상태 ({cfg.ETF_MARKET_INDEX})</b>\n"
     msg += f"  • 지수: {current_market_index:,.2f}\n"
