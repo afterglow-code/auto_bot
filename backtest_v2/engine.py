@@ -93,6 +93,86 @@ class BacktestEngine:
         log_df = pd.DataFrame(self.trade_log)
         
         return history_df, log_df
+    
+# backtest_v2/engine.py (하단에 추가)
+
+class RiskManagedMonthlyEngine:
+    def __init__(self, ohlcv_data, signals):
+        self.close = ohlcv_data['Close']
+        self.high = ohlcv_data['High']
+        self.low = ohlcv_data['Low']
+        self.signals = signals
+        
+        self.capital = config.INITIAL_CAPITAL
+        self.commission = config.COMMISSION
+        self.slippage = config.SLIPPAGE
+        
+        self.holdings = {} # {Ticker: {qty, buy_price, is_breakeven}}
+        self.history = []
+        self.trade_log = []
+
+    def run(self):
+        print("\n🚀 리스크 관리형 월간 엔진 실행 (Daily Stop-loss & Breakeven)")
+        # 신호가 있는 첫 날부터 시뮬레이션
+        sim_dates = self.close.index[self.close.index >= self.signals.index[0]]
+
+        for date in sim_dates:
+            # --- 1. 매일 리스크 감시 (Daily Monitoring) ---
+            for ticker in list(self.holdings.keys()):
+                info = self.holdings[ticker]
+                if ticker not in self.low.columns or pd.isna(self.low.loc[date, ticker]):
+                    continue
+                    
+                curr_low = self.low.loc[date, ticker]
+                curr_high = self.high.loc[date, ticker]
+                
+                # [본전 설정] 5% 이상 상승 시 모드 활성화
+                if not info['is_breakeven'] and curr_high >= info['buy_price'] * 1.05:
+                    self.holdings[ticker]['is_breakeven'] = True
+                
+                exit_price = 0
+                # [손절] -20% 도달 시
+                if curr_low <= info['buy_price'] * 0.80:
+                    exit_price = info['buy_price'] * 0.80 * (1 - self.slippage)
+                    sell_type = 'StopLoss(-20%)'
+                # [본전 매도] 5% 상승 후 다시 본전으로 올 시
+                elif info['is_breakeven'] and curr_low <= info['buy_price']:
+                    exit_price = info['buy_price'] * (1 - self.slippage)
+                    sell_type = 'BreakevenExit'
+
+                if exit_price > 0:
+                    revenue = info['qty'] * exit_price
+                    self.capital += (revenue - (revenue * self.commission))
+                    self.trade_log.append({'Date': date, 'Ticker': ticker, 'Type': sell_type, 'Price': exit_price})
+                    del self.holdings[ticker]
+
+            # --- 2. 월간 리밸런싱 (Monthly Rebalancing) ---
+            if date in self.signals.index:
+                # 기존 전량 청산
+                for ticker, info in self.holdings.items():
+                    p = self.close.loc[date, ticker] * (1 - self.slippage)
+                    self.capital += (info['qty'] * p) * (1 - self.commission)
+                self.holdings = {}
+
+                # 신규 매수
+                weights = self.signals.loc[date]
+                targets = weights[weights > 0]
+                budget = self.capital
+                
+                for ticker, w in targets.items():
+                    if ticker in self.close.columns:
+                        p = self.close.loc[date, ticker] * (1 + self.slippage)
+                        qty = int((budget * w) // p)
+                        if qty > 0:
+                            self.capital -= (qty * p) * (1 + self.commission)
+                            self.holdings[ticker] = {'qty': qty, 'buy_price': p, 'is_breakeven': False}
+                            self.trade_log.append({'Date': date, 'Ticker': ticker, 'Type': 'Monthly_Buy', 'Price': p})
+
+            # 3. 자산 평가
+            val = self.capital + sum(info['qty'] * self.close.loc[date, t] for t, info in self.holdings.items())
+            self.history.append({'Date': date, 'TotalValue': val})
+
+        return pd.DataFrame(self.history).set_index('Date'), pd.DataFrame(self.trade_log)
 
 if __name__ == '__main__':
     # 모듈 단독 테스트

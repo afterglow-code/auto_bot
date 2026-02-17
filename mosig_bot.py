@@ -2,6 +2,7 @@
 
 import FinanceDataReader as fdr
 import pandas as pd
+import numpy as np  # ATR 계산을 위해 추가
 import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz
@@ -11,9 +12,15 @@ import time
 from common import send_telegram
 import config as cfg
 
+# --- 백테스트에서 검증된 파라미터 ---
+ATR_WINDOW = 20
+ATR_MULT = 3.0        # 익절 목표 (ATR의 3배)
+STOP_LOSS_RATE = 0.05 # 손절 (5%)
+VOL_MULT = 2.0        # 거래량 급증 기준 (2배)
+
 def analyze_mosig_strategy():
     """모멘텀 돌파 종목을 병렬로 스캔하고 결과 리스트를 반환하는 함수"""
-    print(f"[{datetime.datetime.now()}] 모멘텀 돌파 스캔 시작...")
+    print(f"[{datetime.datetime.now()}] 모멘텀 돌파(Hybrid) 스캔 시작...")
     
     # 1. 대상 종목 선정
     try:
@@ -28,12 +35,12 @@ def analyze_mosig_strategy():
 
     # 결과 담을 리스트
     candidates = []
+    # ATR 계산(20일)을 위해 데이터 여유있게 90일치 로드
     start_date = (datetime.datetime.now() - datetime.timedelta(days=90)).strftime('%Y-%m-%d')
     total = len(target_stocks)
 
     # --- 병렬 처리 로직 ---
     with ThreadPoolExecutor(max_workers=cfg.MOSIG_MAX_WORKERS) as executor:
-        # 개별 종목 데이터 수집 및 분석 작업을 제출
         future_to_stock = {
             executor.submit(_fetch_and_check, row['Code'], row['Name'], start_date): row['Name']
             for _, row in target_stocks.iterrows()
@@ -41,7 +48,8 @@ def analyze_mosig_strategy():
         
         for i, future in enumerate(as_completed(future_to_stock)):
             stock_name = future_to_stock[future]
-            print(f"\r   분석 진행률: {i+1}/{total} ({stock_name})", end='', flush=True)
+            # 진행 상황 표시 (선택사항)
+            # print(f"\r   분석 진행률: {i+1}/{total} ({stock_name})", end='', flush=True)
             
             result = future.result()
             if result:
@@ -55,7 +63,8 @@ def _fetch_and_check(code, name, start_date):
     try:
         time.sleep(cfg.MOSIG_REQUEST_DELAY)
         df = fdr.DataReader(code, start_date)
-        if len(df) < 20: return None
+        # ATR 계산 및 모멘텀 계산을 위해 최소 30일 이상 데이터 필요
+        if len(df) < 30: return None
 
         is_breakout, stock_info = check_breakout_signal(df, code, name)
         if is_breakout:
@@ -66,61 +75,93 @@ def _fetch_and_check(code, name, start_date):
 
 def check_breakout_signal(df, code, name):
     """
-    데이터프레임을 받아 모멘텀 돌파 신호를 확인하고 정보를 반환합니다.
+    데이터프레임을 받아 Hybrid 모멘텀 신호(거래량+ATR)를 확인하고
+    익절/손절가를 계산하여 반환합니다.
     """
-    # 지표 계산
+    # 1. 모멘텀 지표 계산
     df['Momentum'] = (df['Close'] / df['Close'].shift(10)) * 100
     df['Signal'] = df['Momentum'].rolling(window=9).mean()
-    df['Slope'] = df['Momentum'] - df['Momentum'].shift(1)
     
-    if pd.isna(df.iloc[-1]['Momentum']) or pd.isna(df.iloc[-2]['Momentum']):
+    # 2. ATR(변동성) 계산 - 익절가 산정용
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    df['ATR'] = true_range.rolling(window=ATR_WINDOW).mean()
+
+    # 데이터 유효성 체크
+    if pd.isna(df.iloc[-1]['Momentum']) or pd.isna(df.iloc[-2]['Momentum']) or pd.isna(df.iloc[-1]['ATR']):
         return False, None
 
     today = df.iloc[-1]
     yesterday = df.iloc[-2]
     
-    is_100_breakout = (today['Momentum'] >= 100) and \
-                      (yesterday['Momentum'] < 100) and \
-                      (today['Momentum'] > today['Signal'])
-                  
-    if is_100_breakout:
+    # --- [조건 검증] ---
+    # 1) 모멘텀 돌파 (기존 로직)
+    is_momentum_break = (today['Momentum'] >= 100) and \
+                        (yesterday['Momentum'] < 100) and \
+                        (today['Momentum'] > today['Signal'])
+    
+    # 2) 거래량 폭증 (백테스트 승률 개선 핵심)
+    # 거래량이 0인 경우 방지 및 2배수 확인
+    if yesterday['Volume'] > 0:
+        is_volume_spike = today['Volume'] >= (yesterday['Volume'] * VOL_MULT)
+    else:
+        is_volume_spike = False
+
+    # 최종 진입 조건 (모멘텀 + 거래량)
+    if is_momentum_break and is_volume_spike:
+        current_price = int(today['Close'])
+        atr_value = today['ATR']
+        
+        # --- [익절/손절가 계산] ---
+        # 익절: ATR * 3배 위
+        target_price = int(current_price + (atr_value * ATR_MULT))
+        # 손절: -5% 아래 (고정)
+        stop_price = int(current_price * (1 - STOP_LOSS_RATE))
+        
+        # 수익률(%)로 환산해서 보여주기 위함
+        target_pct = ((target_price - current_price) / current_price) * 100
+        
         return True, {
-            'Code': code, 'Name': name, 'Price': int(today['Close']),
-            'Momentum': today['Momentum'], 'Signal': today['Signal'], 'Slope': today['Slope']
+            'Code': code, 
+            'Name': name, 
+            'Price': current_price,
+            'TargetPrice': target_price,
+            'StopPrice': stop_price,
+            'TargetPct': target_pct,
+            'Momentum': today['Momentum'], 
+            'VolumeRatio': today['Volume'] / yesterday['Volume'] if yesterday['Volume'] > 0 else 0
         }
     
     return False, None
 
 def format_message(candidates):
-    """텔레그램 메시지 포맷팅"""
+    """텔레그램 메시지 포맷팅 (익절/손절가 포함)"""
     if not candidates:
-        return "📉 오늘은 포착된 모멘텀 돌파(Golden Cross) 종목이 없습니다."
+        return "📉 오늘은 포착된 하이브리드(Hybrid) 돌파 종목이 없습니다."
     
-    # 정렬 (설정한 우선순위에 따라)
-    strategy = cfg.MOSIG_STRATEGY
-    if strategy == 'value':
-        candidates.sort(key=lambda x: x['Momentum'], reverse=True)
-        title_emoji, strategy_name = "🚀", "강한 돌파 (High Value)"
-    elif strategy == 'slope':
-        candidates.sort(key=lambda x: x['Slope'], reverse=True)
-        title_emoji, strategy_name = "📈", "급등 출발 (High Slope)"
-    else: # 기본값
-        candidates.sort(key=lambda x: x['Momentum'], reverse=True)
-        title_emoji, strategy_name = "🔎", "모멘텀 알림"
+    # 모멘텀 강한 순으로 정렬
+    candidates.sort(key=lambda x: x['Momentum'], reverse=True)
 
-    # 상위 N개 자르기
+    # 상위 N개
     top_list = candidates[:cfg.MOSIG_PICK_COUNT]
     
-    msg = f"{title_emoji} *[모멘텀 돌파 TOP {len(top_list)}]*\n"
-    msg += f"전략: {strategy_name}\n"
+    msg = f"🚀 *[Mosig Hybrid Signal]*\n"
     msg += f"기준: {datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M')}\n"
-    msg += "-" * 25 + "\n"
+    msg += f"조건: 거래량 {VOL_MULT}배↑ / 손절 -{STOP_LOSS_RATE*100}%\n"
+    msg += "-" * 28 + "\n"
     
     for i, stock in enumerate(top_list):
-        msg += f"*{i+1}. {stock['Name']}* ({stock['Price']:,}원)\n"
-        msg += f"   M: {stock['Momentum']:.1f} / S: {stock['Signal']:.1f}\n"
+        msg += f"*{i+1}. {stock['Name']}* ({stock['Code']})\n"
+        msg += f"   💰 현  재: {stock['Price']:,}원\n"
+        msg += f"   🎯 목  표: *{stock['TargetPrice']:,}원* (+{stock['TargetPct']:.1f}%)\n"
+        msg += f"   🛡️ 손  절: {stock['StopPrice']:,}원\n"
+        msg += f"   📊 M: {stock['Momentum']:.1f} / Vol: {stock['VolumeRatio']:.1f}배\n\n"
     
-    msg += "-" * 25
+    msg += "-" * 28
     msg += f"\n총 {len(candidates)}개 종목 포착됨"
     
     return msg
@@ -136,5 +177,5 @@ if __name__ == "__main__":
     print(message_text)
     print("------------------------------------------")
     
-    # 3. 텔레그램 전송 (mosig_bot 전용 CHAT_ID 사용)
+    # 3. 텔레그램 전송
     send_telegram(message_text, chat_id=cfg.CHAT_ID_1P, parse_mode='Markdown')
