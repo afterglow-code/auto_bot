@@ -133,7 +133,8 @@ def check_breakout_signal(df, code, name):
             'StopPrice': stop_price,
             'TargetPct': target_pct,
             'Momentum': today['Momentum'], 
-            'VolumeRatio': today['Volume'] / yesterday['Volume'] if yesterday['Volume'] > 0 else 0
+            'VolumeRatio': today['Volume'] / yesterday['Volume'] if yesterday['Volume'] > 0 else 0,
+            'ATR': atr_value
         }
     
     return False, None
@@ -159,7 +160,7 @@ def format_message(candidates):
         msg += f"   💰 현  재: {stock['Price']:,}원\n"
         msg += f"   🎯 목  표: *{stock['TargetPrice']:,}원* (+{stock['TargetPct']:.1f}%)\n"
         msg += f"   🛡️ 손  절: {stock['StopPrice']:,}원\n"
-        msg += f"   📊 M: {stock['Momentum']:.1f} / Vol: {stock['VolumeRatio']:.1f}배\n\n"
+        msg += f"   📊 M: {stock['Momentum']:.1f} / Vol: {stock['VolumeRatio']:.1f}배 / ATR: {stock['ATR']:.0f}원\n\n"
     
     msg += "-" * 28
     msg += f"\n총 {len(candidates)}개 종목 포착됨"

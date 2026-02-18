@@ -38,7 +38,7 @@ from chart_plotting import (
     compute_xgboost_forecast,
     build_forecast_chart,
 )
-from technical_indicators import resample_ohlc, InstitutionalExecution
+from technical_indicators import resample_ohlc, InstitutionalExecution, calculate_atr_targets
 from streamlit_ui import render_left_card
 from streamlit_extras.stylable_container import stylable_container
 
@@ -606,6 +606,14 @@ with tabs[1]:
 
     with inst_top_right:
         with st.form("inst_calc_form"):
+            # 계산 모드 선택
+            calc_mode = st.radio(
+                "계산 방식",
+                ["손익비(R배수)", "ATR 기반"],
+                horizontal=True,
+                key="inst_calc_mode"
+            )
+            
             c1, c2, c3 = st.columns([1.2, 1, 1])
             with c1:
                 inst_ticker = st.text_input(
@@ -638,15 +646,19 @@ with tabs[1]:
                     key="inst_total_balance",
                 )
             with b2:
-                risk_tol = st.slider(
-                    "허용 손실률 (Risk %)",
-                    0.5,
-                    5.0,
-                    2.0,
-                    0.5,
-                    help="계좌 전체 금액 중 이 종목에서 손실볼 최대 비중",
-                    key="inst_risk_tol",
-                )
+                if calc_mode == "손익비(R배수)":
+                    risk_tol = st.slider(
+                        "허용 손실률 (Risk %)",
+                        0.5,
+                        5.0,
+                        2.0,
+                        0.5,
+                        help="계좌 전체 금액 중 이 종목에서 손실볼 최대 비중",
+                        key="inst_risk_tol",
+                    )
+                else:  # ATR 기반
+                    risk_tol = 2.0  # 기본값, ATR 모드에서는 사용 안 됨
+                    st.markdown("**ATR 모드**")
 
             b3, b4 = st.columns(2)
             with b3:
@@ -657,14 +669,54 @@ with tabs[1]:
                     key="inst_invest_amount",
                 )
             with b4:
-                target_rr = st.slider(
-                    "목표 손익비",
-                    1.0,
-                    5.0,
-                    2.0,
-                    0.5,
-                    key="inst_target_rr",
-                )
+                if calc_mode == "손익비(R배수)":
+                    target_rr = st.slider(
+                        "목표 손익비",
+                        1.0,
+                        5.0,
+                        2.0,
+                        0.5,
+                        key="inst_target_rr",
+                    )
+                else:  # ATR 기반
+                    atr_mult = st.number_input(
+                        "ATR 배수 (익절)",
+                        min_value=1.0,
+                        max_value=5.0,
+                        value=3.0,
+                        step=0.5,
+                        key="inst_atr_mult",
+                        help="익절 = 진입가 + (ATR × 배수)"
+                    )
+                    target_rr = 2.0  # 기본값
+
+            # ATR 모드 추가 파라미터
+            if calc_mode == "ATR 기반":
+                atr_c1, atr_c2 = st.columns(2)
+                with atr_c1:
+                    atr_window = st.number_input(
+                        "ATR 기간",
+                        min_value=5,
+                        max_value=50,
+                        value=20,
+                        step=1,
+                        key="inst_atr_window",
+                        help="ATR 계산을 위한 기간"
+                    )
+                with atr_c2:
+                    atr_stop_loss = st.slider(
+                        "손절 비율 (%)",
+                        1.0,
+                        10.0,
+                        5.0,
+                        0.5,
+                        key="inst_atr_stop_loss",
+                        help="진입가 대비 손절 비율"
+                    )
+            else:
+                atr_window = 20
+                atr_stop_loss = 5.0
+                atr_mult = 3.0
 
             run_inst = st.form_submit_button("계산 실행", use_container_width=True)
     if run_inst and inst_ticker:
@@ -676,6 +728,7 @@ with tabs[1]:
             float(risk_tol),
             float(invest_amount),
             float(target_rr),
+            calc_mode,
         )
         if st.session_state.get("inst_calc_sig") != inst_sig:
             st.session_state["inst_calc_sig"] = inst_sig
@@ -687,26 +740,52 @@ with tabs[1]:
 
         if entry_price and invest_amount > 0:
             qty = invest_amount / entry_price
-            allowed_loss = total_balance * (risk_tol / 100)
-            risk_per_share = allowed_loss / qty if qty > 0 else 0
-            stop_price = entry_price - risk_per_share
-            target_price = entry_price + (risk_per_share * target_rr)
             portfolio_pct = (invest_amount / total_balance * 100) if total_balance else 0
 
-            st.session_state["inst_calc_cache"] = {
-                "ticker": inst_ticker,
-                "entry": entry_price,
-                "current_close": current_close,
-                "price_df": price_df,
-                "qty": qty,
-                "invest_amount": invest_amount,
-                "portfolio_pct": portfolio_pct,
-                "stop_price": stop_price,
-                "target_price": target_price,
-                "total_balance": total_balance,
-                "risk_tol": risk_tol,
-                "target_rr": target_rr,
-            }
+            # ATR 기반 계산 vs 손익비 기반 계산
+            if calc_mode == "ATR 기반":
+                target_price, stop_price, atr_value = calculate_atr_targets(
+                    price_df,
+                    entry_price,
+                    atr_window=int(atr_window),
+                    atr_mult=float(atr_mult),
+                    stop_loss_rate=atr_stop_loss / 100.0
+                )
+                
+                if target_price is None or stop_price is None:
+                    st.error("ATR 계산에 필요한 충분한 데이터가 없습니다. 더 긴 기간을 선택하세요.")
+                    st.session_state["inst_calc_cache"] = None
+                else:
+                    calc_method = "ATR"
+                    risk_per_share = entry_price - stop_price
+            else:
+                # 기존 손익비 기반 계산
+                allowed_loss = total_balance * (risk_tol / 100)
+                risk_per_share = allowed_loss / qty if qty > 0 else 0
+                stop_price = entry_price - risk_per_share
+                target_price = entry_price + (risk_per_share * target_rr)
+                calc_method = "R배수"
+
+            if target_price and stop_price and risk_per_share:
+                st.session_state["inst_calc_cache"] = {
+                    "ticker": inst_ticker,
+                    "entry": entry_price,
+                    "current_close": current_close,
+                    "price_df": price_df,
+                    "qty": qty,
+                    "invest_amount": invest_amount,
+                    "portfolio_pct": portfolio_pct,
+                    "stop_price": stop_price,
+                    "target_price": target_price,
+                    "total_balance": total_balance,
+                    "risk_tol": risk_tol,
+                    "target_rr": target_rr,
+                    "calc_method": calc_method,
+                    "risk_per_share": risk_per_share,
+                }
+            else:
+                st.session_state["inst_calc_cache"] = None
+                st.error("입력값을 확인해주세요.")
         else:
             st.session_state["inst_calc_cache"] = None
             st.error("입력값을 확인해주세요.")
@@ -720,9 +799,15 @@ with tabs[1]:
             st.caption("계산 실행을 눌러 결과를 확인하세요.")
         else:
             if calc.get("qty"):
-                st.caption(
-                    f"💡 원칙: 이 트레이딩이 실패해도 계좌 전체에서 **{int(calc['total_balance'] * calc['risk_tol'] / 100):,}** 이상 잃지 않습니다."
-                )
+                calc_method = calc.get("calc_method", "R배수")
+                if calc_method == "ATR":
+                    st.caption(
+                        f"💡 방식: **ATR 기반** | 진입가 ± ATR 배수로 목표가/손절가 결정"
+                    )
+                else:
+                    st.caption(
+                        f"💡 원칙: 이 트레이딩이 실패해도 계좌 전체에서 **{int(calc['total_balance'] * calc['risk_tol'] / 100):,}** 이상 잃지 않습니다."
+                    )
                 k1, k2, k3 = st.columns(3)
                 k1.metric("적정 매수 수량", f"{int(calc['qty']):,} 주")
                 if calc["ticker"].isdigit():

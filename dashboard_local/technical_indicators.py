@@ -82,6 +82,41 @@ class UniversalRiskRewardCalculator:
         return pd.DataFrame(results), rr_data
 
 
+def calculate_atr_targets(df, entry_price, atr_window=20, atr_mult=3.0, stop_loss_rate=0.05):
+    """
+    ATR 기반 익절/손절 가격 계산 (mosig_bot과 동일한 로직)
+    
+    :param df: OHLCV 데이터프레임 (최소 20일치 이상)
+    :param entry_price: 진입 가격
+    :param atr_window: ATR 계산 기간 (기본값 20)
+    :param atr_mult: 익절 배수 (기본값 3.0 = ATR의 3배)
+    :param stop_loss_rate: 손절 비율 (기본값 0.05 = -5%)
+    :return: (target_price, stop_price, atr_value) 튜플
+    """
+    if len(df) < atr_window:
+        return None, None, None
+    
+    # ATR 계산
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    atr = true_range.rolling(window=atr_window).mean()
+    
+    atr_value = atr.iloc[-1]
+    if pd.isna(atr_value):
+        return None, None, None
+    
+    # 익절: ATR * atr_mult 위
+    target_price = entry_price + (atr_value * atr_mult)
+    # 손절: -stop_loss_rate 아래
+    stop_price = entry_price * (1 - stop_loss_rate)
+    
+    return target_price, stop_price, atr_value
+
+
 class InstitutionalExecution:
     def __init__(self, account_balance, risk_per_trade_pct=2.0):
         """
