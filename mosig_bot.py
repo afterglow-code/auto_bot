@@ -49,7 +49,7 @@ def analyze_mosig_strategy():
         for i, future in enumerate(as_completed(future_to_stock)):
             stock_name = future_to_stock[future]
             # 진행 상황 표시 (선택사항)
-            # print(f"\r   분석 진행률: {i+1}/{total} ({stock_name})", end='', flush=True)
+            print(f"\r   분석 진행률: {i+1}/{total} ({stock_name})", end='', flush=True)
             
             result = future.result()
             if result:
