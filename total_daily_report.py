@@ -67,96 +67,96 @@ def create_consolidated_report(etf, stock, us, mosig_list):
     }
     
     # --- 헤더 ---
-    msg = f"<b>📊 통합 투자 리포트 [{today_dt.strftime('%m/%d %H:%M')}]</b>"
-    msg += f"━━━━━━━━━━━━━━━━━━━━"
+    msg = f"<b>📊 통합 투자 리포트 [{today_dt.strftime('%m/%d %H:%M')}]</b>\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
     
     # --- 1. 요약 섹션 ---
     etf_status = etf.get('market_status', '정보 없음')
     stock_status = stock.get('market_status', '정보 없음')
     us_status = us.get('market_status', '정보 없음')
     
-    msg += f"<b>📝 시장 요약</b>"
-    msg += f"🇰🇷 ETF : {status_emoji.get(etf_status, '')} {etf_status}"
-    msg += f"🇰🇷 국장 : {status_emoji.get(stock_status, '')} {stock_status}"
-    msg += f"🇺🇸 미장 : {status_emoji.get(us_status, '')} {us_status}"
-    msg += f"🔎 포착 : {len(mosig_list)}개 종목"
+    msg += f"<b>📝 시장 요약</b>\n"
+    msg += f"🇰🇷 ETF : {status_emoji.get(etf_status, '')} {etf_status}\n"
+    msg += f"🇰🇷 국장 : {status_emoji.get(stock_status, '')} {stock_status}\n"
+    msg += f"🇺🇸 미장 : {status_emoji.get(us_status, '')} {us_status}\n"
+    msg += f"🔎 포착 : {len(mosig_list)}개 종목\n"
     
-    msg += f"━━━━━━━━━━━━━━━━━━━━"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
 
     # --- 2. 한국 ETF 전략 ---
-    msg += f"<b>1️⃣ 🇰🇷 한국 ETF</b>"
+    msg += f"\n<b>1️⃣ 🇰🇷 한국 ETF</b>\n"
     if etf.get('error'):
-        msg += f"⚠️ 오류: {etf['error']}"
+        msg += f"⚠️ 오류: {etf['error']}\n"
     else:
         # 시장 지수
         idx_val = etf.get('market_index_val', 0)
         # 만약 시리즈라면 마지막 값 추출 (안전장치)
         if hasattr(idx_val, 'iloc'): idx_val = idx_val.iloc[-1]
         
-        msg += f"• 코스피: {idx_val:,.0f}"
+        msg += f"• 코스피: {idx_val:,.0f}\n"
         
         targets = etf.get('final_targets', [])
         if not targets:
-            msg += f"• 추천: 없음"
+            msg += f"• 추천: 없음\n"
         else:
-            msg += f"• <b>Top Pick:</b>"
+            msg += f"• <b>Top Pick:</b>\n"
             for name, weight in targets:
                 # 점수 찾기
                 score = etf['weighted_score'].get(name, 0.0) if 'weighted_score' in etf else 0
-                msg += f"  - {name} ({int(weight*100)}%)"
+                msg += f"  - {name} ({int(weight*100)}%)\n"
     
     msg += ""
 
     # --- 3. 한국 개별주 전략 ---
-    msg += f"<b>2️⃣ 🇰🇷 한국 개별주</b>"
+    msg += f"\n<b>2️⃣ 🇰🇷 한국 개별주</b>\n"
     if stock.get('error'):
-        msg += f"⚠️ 오류: {stock['error']}"
+        msg += f"⚠️ 오류: {stock['error']}\n"
     else:
         targets = stock.get('final_targets', [])
         if not targets:
-            msg += f"• 추천: 없음"
+            msg += f"• 추천: 없음\n"
         else:
             # 방어 자산만 있는지 확인
             is_only_defense = len(targets) == 1 and targets[0][0] == cfg.STOCK_DEFENSE_ASSET
             
             if is_only_defense:
-                msg += f"🛡️ <b>달러 방어 모드</b> (100%)"
+                msg += f"🛡️ <b>달러 방어 모드</b> (100%)\n"
             else:
-                msg += f"• <b>Top Pick:</b>"
+                msg += f"• <b>Top Pick:</b>\n"
                 for name, weight in targets:
                     if name == cfg.STOCK_DEFENSE_ASSET:
-                        msg += f"  - 🛡️ {name} ({int(weight*100)}%)"
+                        msg += f"  - 🛡️ {name} ({int(weight*100)}%)\n"
                     else:
-                        msg += f"  - 🔥 {name} ({int(weight*100)}%)"
+                        msg += f"  - 🔥 {name} ({int(weight*100)}%)\n"
 
     msg += ""
 
     # --- 4. 미국 주식 전략 ---
-    msg += f"<b>3️⃣ 🇺🇸 미국 주식</b>"
+    msg += f"\n<b>3️⃣ 🇺🇸 미국 주식</b>\n"
     if us.get('error'):
-        msg += f"⚠️ 오류: {us['error']}"
+        msg += f"⚠️ 오류: {us['error']}\n"
     else:
         idx_val = us.get('market_index_val', 0)
         if hasattr(idx_val, 'iloc'): idx_val = idx_val.iloc[-1]
 
-        msg += f"• S&P500: {idx_val:,.0f}"
+        msg += f"• S&P500: {idx_val:,.0f}\n"
         
         targets = us.get('final_targets', [])
         if not targets:
-            msg += f"• 추천: 없음"
+            msg += f"• 추천: 없음\n"
         else:
             is_only_defense = len(targets) == 1 and targets[0][0] == cfg.US_DEFENSE_ASSET
             if is_only_defense:
-                 msg += f"🛡️ <b>현금/채권 방어</b> (BIL 100%)"
+                 msg += f"🛡️ <b>현금/채권 방어</b> (BIL 100%)\n"
             else:
-                msg += f"• <b>Top Pick:</b>"
+                msg += f"• <b>Top Pick:</b>\n"
                 for name, weight in targets:
                     if name == cfg.US_DEFENSE_ASSET:
-                        msg += f"  - 🛡️ {name} ({int(weight*100)}%)"
+                        msg += f"  - 🛡️ {name} ({int(weight*100)}%)\n"
                     else:
-                        msg += f"  - 🔥 {name} ({int(weight*100)}%)"
+                        msg += f"  - 🔥 {name} ({int(weight*100)}%)\n"
 
-    msg += f"━━━━━━━━━━━━━━━━━━━━"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
     msg += f"<i>💡 상세 내용은 각 터미널 로그 확인</i>"
     
     return msg
