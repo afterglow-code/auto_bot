@@ -75,8 +75,9 @@ def _fetch_and_check(code, name, start_date):
 
 def check_breakout_signal(df, code, name):
     """
-    데이터프레임을 받아 Hybrid 모멘텀 신호(거래량+ATR)를 확인하고
-    익절/손절가를 계산하여 반환합니다.
+    [업데이트된 Hybrid 3.0 로직]
+    데이터프레임을 받아 모멘텀 돌파 + 동적 거래량 급증(20일 이평선 돌파)을 확인합니다.
+    * 최소 거래대금 필터는 요청에 따라 제외되었습니다.
     """
     # 1. 모멘텀 지표 계산
     df['Momentum'] = (df['Close'] / df['Close'].shift(10)) * 100
@@ -91,27 +92,39 @@ def check_breakout_signal(df, code, name):
     true_range = ranges.max(axis=1)
     df['ATR'] = true_range.rolling(window=ATR_WINDOW).mean()
 
+    # 3. [신규] 거래량 이동평균(20일) 계산
+    # 전일 거래량이 아닌 '평소 거래량'과 비교하기 위함 (기저효과 제거)
+    df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
+
     # 데이터 유효성 체크
-    if pd.isna(df.iloc[-1]['Momentum']) or pd.isna(df.iloc[-2]['Momentum']) or pd.isna(df.iloc[-1]['ATR']):
+    # (최소한 어제 기준의 20일 이평선 데이터가 있어야 함)
+    if pd.isna(df.iloc[-1]['Momentum']) or pd.isna(df.iloc[-2]['Vol_MA20']) or pd.isna(df.iloc[-1]['ATR']):
         return False, None
 
     today = df.iloc[-1]
     yesterday = df.iloc[-2]
     
     # --- [조건 검증] ---
-    # 1) 모멘텀 돌파 (기존 로직)
+    
+    # 1) 모멘텀 돌파 (기존 로직 유지)
+    # 오늘 100 돌파 AND 어제는 100 아래 AND 시그널선 위
     is_momentum_break = (today['Momentum'] >= 100) and \
                         (yesterday['Momentum'] < 100) and \
                         (today['Momentum'] > today['Signal'])
     
-    # 2) 거래량 폭증 (백테스트 승률 개선 핵심)
-    # 거래량이 0인 경우 방지 및 2배수 확인
-    if yesterday['Volume'] > 0:
-        is_volume_spike = today['Volume'] >= (yesterday['Volume'] * VOL_MULT)
+    # 2) [핵심 변경] 동적 거래량 폭증 (Dynamic Volume Threshold)
+    # 기준: 어제까지의 20일 평균 거래량
+    vol_ma_baseline = yesterday['Vol_MA20']
+    
+    if vol_ma_baseline > 0:
+        # 평소 대비 2배(VOL_MULT) 이상 터졌는가?
+        is_volume_spike = today['Volume'] >= (vol_ma_baseline * VOL_MULT)
     else:
         is_volume_spike = False
 
-    # 최종 진입 조건 (모멘텀 + 거래량)
+    # 3) 최소 거래대금 필터: 요청에 따라 제외함
+
+    # 최종 진입 조건 (모멘텀 + 동적 거래량)
     if is_momentum_break and is_volume_spike:
         current_price = int(today['Close'])
         atr_value = today['ATR']
@@ -122,9 +135,12 @@ def check_breakout_signal(df, code, name):
         # 손절: -5% 아래 (고정)
         stop_price = int(current_price * (1 - STOP_LOSS_RATE))
         
-        # 수익률(%)로 환산해서 보여주기 위함
+        # 수익률(%)로 환산
         target_pct = ((target_price - current_price) / current_price) * 100
         
+        # 거래량 배율 계산 (평균 대비 몇 배인지 리턴)
+        vol_ratio = today['Volume'] / vol_ma_baseline if vol_ma_baseline > 0 else 0
+
         return True, {
             'Code': code, 
             'Name': name, 
@@ -133,7 +149,7 @@ def check_breakout_signal(df, code, name):
             'StopPrice': stop_price,
             'TargetPct': target_pct,
             'Momentum': today['Momentum'], 
-            'VolumeRatio': today['Volume'] / yesterday['Volume'] if yesterday['Volume'] > 0 else 0,
+            'VolumeRatio': vol_ratio, # 전일 대비가 아닌 '평균 대비' 배수
             'ATR': atr_value
         }
     
