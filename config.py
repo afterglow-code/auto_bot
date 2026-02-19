@@ -32,7 +32,26 @@ US_ASSETS = 10000         # 미국 주식 봇 ($)
 MOMENTUM_WEIGHTS = (0.3, 0.3, 0.4) 
 
 # --- 2. 한국 ETF 봇 ---
-ETF_TICKERS = {
+# 자동으로 fdr.StockListing('ETF/KR')에서 받아옴
+ETF_MIN_MARCAP = 0  # 최소 시총 (억원) - 0이면 필터 안함
+ETF_TOP_N = 0        # 시총 상위 N개만 선택 - 0이면 전체
+ETF_EXCLUDE_PATTERNS = [  # 제외할 ETF 패턴 (종목명에 포함된 경우 제외)
+    '레버리지',
+    '선물',
+    '금융채',
+    '회사채',
+    '단기채',
+    '중기채',
+    '장기채',
+    '은행채',
+    
+]
+ETF_EXCLUDE_LIST = [  # 제외할 ETF 종목명 리스트 (정확히 일치하는 경우만)
+    # 예: 'KODEX 200'
+]
+
+# 기존 config와 호환성 유지 (옵션)
+ETF_TICKERS = {  # 수동 설정 (사용하지 않음)
     'KODEX 200': '069500',
     'KODEX 미국나스닥100TR': '379810',
     'ACE 미국S&P500': '360200',

@@ -12,13 +12,23 @@ def get_rebalance_dates(dates, start_date):
     rebalance_dates = df.reset_index().rename(columns={'index': 'Date'}).groupby('year_month')['Date'].first().tolist()
     return rebalance_dates
 
-def generate_signals(ohlcv_data, benchmark_data, strategy_name, use_vol_filter=False):
+def generate_signals(price_or_ohlcv_data, benchmark_data, strategy_name, use_vol_filter=False):
     """
     전략에 맞는 투자 신호를 생성합니다. 
     use_vol_filter=True일 경우 리밸런싱 날짜 당일 거래량이 전일 대비 2배인 종목만 필터링합니다.
+    
+    Args:
+        price_or_ohlcv_data: DataFrame (Close만) 또는 dict (OHLCV 딕셔너리)
     """
-    price_data = ohlcv_data['Close']
-    volume_data = ohlcv_data['Volume']
+    # OHLCV 딕셔너리인지 DataFrame인지 체크
+    if isinstance(price_or_ohlcv_data, dict):
+        # OHLCV 데이터인 경우
+        price_data = price_or_ohlcv_data['Close']
+        volume_data = price_or_ohlcv_data['Volume']
+    else:
+        # Close만 있는 DataFrame인 경우
+        price_data = price_or_ohlcv_data
+        volume_data = None
     
     print(f"\n📈 투자 신호 생성: [{config.PARAMS[strategy_name]['NAME']}] (Vol Filter: {use_vol_filter})")
 
@@ -50,7 +60,7 @@ def generate_signals(ohlcv_data, benchmark_data, strategy_name, use_vol_filter=F
         scores = scores.drop(cfg['DEFENSE_ASSET'], errors='ignore')
 
         # 3. [추가] 거래량 필터 적용 (2배 돌파 여부)
-        if use_vol_filter:
+        if use_vol_filter and volume_data is not None:
             try:
                 # 당일 거래량 / 전일 거래량
                 vol_ratio = volume_data.loc[date] / volume_data.shift(1).loc[date]
@@ -58,6 +68,8 @@ def generate_signals(ohlcv_data, benchmark_data, strategy_name, use_vol_filter=F
                 scores = scores[vol_mask] 
             except Exception:
                 pass
+        elif use_vol_filter and volume_data is None:
+            print("⚠️ 거래량 필터를 사용하려면 OHLCV 데이터가 필요합니다. 필터 무시됨.")
 
         # 4. 상위 종목 비중 할당
         positive_scores = scores[scores > 0].sort_values(ascending=False)

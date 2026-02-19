@@ -33,8 +33,43 @@ def analyze_etf_strategy():
         'error': None
     }
 
-    # 1. 데이터 준비 (config에서 설정값 로드)
-    etf_tickers = cfg.ETF_TICKERS
+    # 1. 데이터 준비 - FDR에서 전체 ETF 리스트 받아오기
+    try:
+        print("📋 한국 ETF 전종목 리스트 조회 중...")
+        etf_listing = fdr.StockListing('ETF/KR')
+        
+        # 필터링 옵션 (config에서 설정)
+        if hasattr(cfg, 'ETF_MIN_MARCAP') and cfg.ETF_MIN_MARCAP > 0:
+            etf_listing = etf_listing[etf_listing['MarCap'] >= cfg.ETF_MIN_MARCAP]
+            print(f"   ✓ 시총 {cfg.ETF_MIN_MARCAP:,}억 이상 필터 적용")
+        
+        # 패턴으로 제외할 ETF (레버리지, 인버스 등)
+        if hasattr(cfg, 'ETF_EXCLUDE_PATTERNS') and cfg.ETF_EXCLUDE_PATTERNS:
+            for pattern in cfg.ETF_EXCLUDE_PATTERNS:
+                before_count = len(etf_listing)
+                etf_listing = etf_listing[~etf_listing['Name'].str.contains(pattern, case=False, na=False)]
+                excluded_count = before_count - len(etf_listing)
+                if excluded_count > 0:
+                    print(f"   ✓ '{pattern}' 포함 제외: {excluded_count}개")
+        
+        # 정확한 종목명으로 제외할 ETF
+        if hasattr(cfg, 'ETF_EXCLUDE_LIST') and cfg.ETF_EXCLUDE_LIST:
+            etf_listing = etf_listing[~etf_listing['Name'].isin(cfg.ETF_EXCLUDE_LIST)]
+            print(f"   ✓ 정확히 일치하는 종목 제외: {len(cfg.ETF_EXCLUDE_LIST)}개")
+        
+        # 상위 N개만 선택 (config에 설정된 경우)
+        if hasattr(cfg, 'ETF_TOP_N') and cfg.ETF_TOP_N > 0:
+            etf_listing = etf_listing.nlargest(cfg.ETF_TOP_N, 'MarCap')
+            print(f"   ✓ 시총 상위 {cfg.ETF_TOP_N}개 선택")
+        
+        # ETF 티커 딕셔너리 생성 {종목명: 티커}
+        etf_tickers = dict(zip(etf_listing['Name'], etf_listing['Symbol']))
+        print(f"✅ 총 {len(etf_tickers)}개 ETF 선정")
+        
+    except Exception as e:
+        result['error'] = f"ETF 리스트 조회 오류: {e}"
+        print(result['error'])
+        return result
     
     end_date = datetime.now().strftime("%Y-%m-%d")
     start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")

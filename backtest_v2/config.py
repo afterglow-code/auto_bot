@@ -34,17 +34,9 @@ PARAMS = {
     'ETF_KR': {
         'NAME': '한국 ETF 가중모멘텀',
         'UNIVERSE': {
-            'KODEX 200': '069500',
-            'KODEX 미국나스닥100TR': '379810',
-            'ACE 미국S&P500': '360200',
-            'KODEX 반도체': '091160',
-            'KODEX 헬스케어': '266420',
-            'KODEX 미국달러선물': '261240',
-            'KODEX AI전력핵심설비': '487240',
-            'ACE 구글벨류체인액티브': '483340',
-            'PLUS K방산': '449170',
-            'KODEX 미국30년국채액티브(H)': '484790',
-            'KODEX 코스닥150': '229200',
+            'MIN_MARCAP': 500,  # 최소 시총 (억원)
+            'TOP_N_ETFS': 50,   # 시총 상위 N개 선택
+            'EXCLUDE_PATTERNS': ['레버리지', '인버스', 'Short', '곱버스'],
         },
         'MARKET_INDEX': 'KS11',          # 시장 지수 (벤치마크)
         'DEFENSE_ASSET': 'KODEX 미국달러선물', # 방어 자산

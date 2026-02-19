@@ -108,7 +108,35 @@ def load_data_for_strategy(strategy_name):
 
     # 유니버스 구성
     universe = {}
-    if strategy_name == 'STOCK_KR':
+    if strategy_name == 'ETF_KR':
+        print("   - 한국 ETF 전종목 리스트 조회...")
+        etf_listing = fdr.StockListing('ETF/KR')
+        
+        # 필터링
+        if 'MIN_MARCAP' in cfg['UNIVERSE'] and cfg['UNIVERSE']['MIN_MARCAP'] > 0:
+            etf_listing = etf_listing[etf_listing['MarCap'] >= cfg['UNIVERSE']['MIN_MARCAP']]
+            print(f"     ✓ 시총 {cfg['UNIVERSE']['MIN_MARCAP']}억 이상 필터")
+        
+        # 패턴 제외
+        if 'EXCLUDE_PATTERNS' in cfg['UNIVERSE']:
+            for pattern in cfg['UNIVERSE']['EXCLUDE_PATTERNS']:
+                before = len(etf_listing)
+                etf_listing = etf_listing[~etf_listing['Name'].str.contains(pattern, case=False, na=False)]
+                if before > len(etf_listing):
+                    print(f"     ✓ '{pattern}' 제외: {before - len(etf_listing)}개")
+        
+        # 상위 N개 선택
+        if 'TOP_N_ETFS' in cfg['UNIVERSE'] and cfg['UNIVERSE']['TOP_N_ETFS'] > 0:
+            etf_listing = etf_listing.nlargest(cfg['UNIVERSE']['TOP_N_ETFS'], 'MarCap')
+            print(f"     ✓ 시총 상위 {cfg['UNIVERSE']['TOP_N_ETFS']}개 선택")
+        
+        for _, row in etf_listing.iterrows():
+            universe[row['Name']] = row['Symbol']
+        
+        # 방어자산 추가
+        universe[cfg['DEFENSE_ASSET']] = '261240'
+        
+    elif strategy_name == 'STOCK_KR':
         print("   - KOSPI/KOSDAQ 시총 상위 수집...")
         kospi = fdr.StockListing('KOSPI').sort_values('Marcap', ascending=False).head(cfg['UNIVERSE']['KOSPI_TOP_N'])
         kosdaq = fdr.StockListing('KOSDAQ').sort_values('Marcap', ascending=False).head(cfg['UNIVERSE']['KOSDAQ_TOP_N'])
@@ -148,7 +176,18 @@ def load_data_for_hybrid(strategy_name):
     fetch_start_str = fetch_start_dt.strftime("%Y-%m-%d")
 
     universe = {}
-    if strategy_name == 'STOCK_KR':
+    if strategy_name == 'ETF_KR':
+        etf_listing = fdr.StockListing('ETF/KR')
+        if 'MIN_MARCAP' in cfg['UNIVERSE'] and cfg['UNIVERSE']['MIN_MARCAP'] > 0:
+            etf_listing = etf_listing[etf_listing['MarCap'] >= cfg['UNIVERSE']['MIN_MARCAP']]
+        if 'EXCLUDE_PATTERNS' in cfg['UNIVERSE']:
+            for pattern in cfg['UNIVERSE']['EXCLUDE_PATTERNS']:
+                etf_listing = etf_listing[~etf_listing['Name'].str.contains(pattern, case=False, na=False)]
+        if 'TOP_N_ETFS' in cfg['UNIVERSE'] and cfg['UNIVERSE']['TOP_N_ETFS'] > 0:
+            etf_listing = etf_listing.nlargest(cfg['UNIVERSE']['TOP_N_ETFS'], 'MarCap')
+        for _, row in etf_listing.iterrows():
+            universe[row['Name']] = row['Symbol']
+    elif strategy_name == 'STOCK_KR':
         kospi = fdr.StockListing('KOSPI').sort_values('Marcap', ascending=False).head(cfg['UNIVERSE']['KOSPI_TOP_N'])
         kosdaq = fdr.StockListing('KOSDAQ').sort_values('Marcap', ascending=False).head(cfg['UNIVERSE']['KOSDAQ_TOP_N'])
         for _, row in pd.concat([kospi, kosdaq]).iterrows():
