@@ -64,6 +64,7 @@ ETF_TICKERS = {  # 수동 설정 (사용하지 않음)
     'KODEX 미국30년국채액티브(H)': '484790',
     'KODEX 코스닥150': '229200',
     'Tiger 200 금융': '139270',
+    'KODEX 증권' : '102970',
 }
 ETF_MARKET_INDEX = 'KS11' # 시장 지수 (코스피)
 ETF_DEFENSE_ASSET = 'KODEX 미국달러선물' # 방어 자산
