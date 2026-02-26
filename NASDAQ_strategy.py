@@ -39,21 +39,27 @@ def calculate_rsi(df, period=14):
     return df
 
 def generate_signals(df):
-    df['SMA200'] = df['Close'].rolling(window=200).mean()
+    # 튜닝 결과 반영: SMA 200 -> 180으로 최적화
+    df['SMA180'] = df['Close'].rolling(window=180).mean()
     df['Leverage_Level'] = 1
     for i in range(len(df)):
-        # 초정밀 튜닝 결과: RSI > 46.0 적용
-        if (df['Trend'].iloc[i] == 1 and 
-            df['Close'].iloc[i] > df['SMA200'].iloc[i] and 
-            df['MACD'].iloc[i] > df['Signal'].iloc[i] and
-            df['RSI'].iloc[i] > 46.0): 
-            df.at[df.index[i], 'Leverage_Level'] = 3
-        else:
+        # 1. 하락/방어 조건 (Trend 하락 혹은 180일선 하회)
+        if df['Trend'].iloc[i] == -1 or df['Close'].iloc[i] < df['SMA180'].iloc[i]:
             df.at[df.index[i], 'Leverage_Level'] = 1
+        
+        # 2. 강력 상승 조건 (모든 모멘텀 일치)
+        elif (df['MACD'].iloc[i] > df['Signal'].iloc[i] and 
+              df['RSI'].iloc[i] > 46.0):
+            df.at[df.index[i], 'Leverage_Level'] = 3
+            
+        # 3. 중립 조건 (추세는 살아있으나 모멘텀 부족)
+        else:
+            df.at[df.index[i], 'Leverage_Level'] = 2
+            
     return df
 
 if __name__ == "__main__":
-    print("최신 나스닥 데이터를 분석 중입니다...")
+    print("🚀 나스닥 3단계 레버리지 시스템 가동 중...")
     start_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d')
     try:
         # 1. 판단 지표(QQQ) 분석
@@ -64,25 +70,32 @@ if __name__ == "__main__":
         qqq = generate_signals(qqq)
         latest = qqq.iloc[-1]
         
-        # 2. 추천 종목 결정 및 가격 로드
-        target_symbol = 'TQQQ' if latest['Leverage_Level'] == 3 else 'QQQM'
+        # 2. 추천 종목 결정 (3: TQQQ, 2: QLD, 1: QQQM)
+        level_map = {3: 'TQQQ', 2: 'QLD', 1: 'QQQM'}
+        target_symbol = level_map[latest['Leverage_Level']]
+        
         target_data = fdr.DataReader(target_symbol, (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'))
         target_price = target_data['Close'].iloc[-1]
         
         # 3. 최종 리포트 출력
         print("\n" + "★"*25)
-        print(f" [ 나스닥 퀀트 마스터: 최종 시스템 ]")
+        print(f" [ 나스닥 퀀트 마스터: 3단계 기어 변속 ]")
         print(f" 분석 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("★"*25)
-        print(f" 오늘의 추천 자산: {target_symbol}")
-        print(f" 추천 종목 현재가: ${target_price:,.2f}")
+        print(f" 오늘의 시장 강도 : {int(latest['Leverage_Level'])}단계")
+        print(f" 추천 타겟 자산   : {target_symbol}")
+        print(f" 현재가(종가기준) : ${target_price:,.2f}")
         print("-" * 50)
+        
+        mode_desc = {3: "🔥 강력 상승 (Full Power)", 2: "⚖️ 중립 유지 (Middle Gear)", 1: "🛡️ 방어 모드 (Safety First)"}
         print(f" [ 전략 핵심 상태 ]")
+        print(f" - 현재 모드      : {mode_desc[latest['Leverage_Level']]}")
         print(f" - 추세(Supertrend): {'상승' if latest['Trend']==1 else '하락'}")
+        print(f" - 장기추세(SMA180): {'상회' if latest['Close'] > latest['SMA180'] else '하회'}")
         print(f" - 모멘텀(MACD)   : {'살아있음' if latest['MACD'] > latest['Signal'] else '죽어있음'}")
         print(f" - 시장강도(RSI)  : {latest['RSI']:.2f} (기준: 46.0)")
         print("-" * 50)
-        print(f" 결론: {target_symbol}을(를) ${target_price:,.2f}에 매수/보유하세요.")
+        print(f" 결론: {target_symbol}을(를) 통해 시장 {int(latest['Leverage_Level'])}배수 대응을 유지하세요.")
         print("="*50)
     except Exception as e:
         print(f"에러 발생: {e}")
