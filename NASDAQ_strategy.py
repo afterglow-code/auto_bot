@@ -3,23 +3,46 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-def calculate_supertrend(df, period=10, multiplier=2.0):
+def calculate_supertrend(df, period=10, multiplier=3.0, change_atr=True):
     df = df.copy()
     high, low, close = df['High'], df['Low'], df['Close']
-    tr = pd.concat([high - low, abs(high - close.shift(1)), abs(low - close.shift(1))], axis=1).max(axis=1)
-    atr = tr.rolling(window=period).mean()
     hl2 = (high + low) / 2
-    upper_band, lower_band = hl2 + (multiplier * atr), hl2 - (multiplier * atr)
-    f_upper, f_lower = upper_band.copy(), lower_band.copy()
+
+    tr = pd.concat(
+        [high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()],
+        axis=1
+    ).max(axis=1)
+
+    atr_sma = tr.rolling(window=period).mean()
+    atr_rma = tr.ewm(alpha=1 / period, adjust=False).mean()
+    atr = atr_rma if change_atr else atr_sma
+
+    up_raw = hl2 - (multiplier * atr)
+    dn_raw = hl2 + (multiplier * atr)
+
+    up = up_raw.copy()
+    dn = dn_raw.copy()
+
     for i in range(1, len(df)):
-        if upper_band.iloc[i] < f_upper.iloc[i-1] or close.iloc[i-1] > f_upper.iloc[i-1]: f_upper.iloc[i] = upper_band.iloc[i]
-        else: f_upper.iloc[i] = f_upper.iloc[i-1]
-        if lower_band.iloc[i] > f_lower.iloc[i-1] or close.iloc[i-1] < f_lower.iloc[i-1]: f_lower.iloc[i] = lower_band.iloc[i]
-        else: f_lower.iloc[i] = f_lower.iloc[i-1]
-    trend = np.ones(len(df))
+        up1 = up.iloc[i - 1] if pd.notna(up.iloc[i - 1]) else up_raw.iloc[i]
+        dn1 = dn.iloc[i - 1] if pd.notna(dn.iloc[i - 1]) else dn_raw.iloc[i]
+
+        up.iloc[i] = max(up_raw.iloc[i], up1) if close.iloc[i - 1] > up1 else up_raw.iloc[i]
+        dn.iloc[i] = min(dn_raw.iloc[i], dn1) if close.iloc[i - 1] < dn1 else dn_raw.iloc[i]
+
+    trend = np.ones(len(df), dtype=int)
     for i in range(1, len(df)):
-        if trend[i-1] == 1: trend[i] = -1 if close.iloc[i] < f_lower.iloc[i] else 1
-        else: trend[i] = 1 if close.iloc[i] > f_upper.iloc[i] else -1
+        prev_trend = trend[i - 1]
+        up1 = up.iloc[i - 1] if pd.notna(up.iloc[i - 1]) else up.iloc[i]
+        dn1 = dn.iloc[i - 1] if pd.notna(dn.iloc[i - 1]) else dn.iloc[i]
+
+        if prev_trend == -1 and close.iloc[i] > dn1:
+            trend[i] = 1
+        elif prev_trend == 1 and close.iloc[i] < up1:
+            trend[i] = -1
+        else:
+            trend[i] = prev_trend
+
     df['Trend'] = trend
     return df
 
